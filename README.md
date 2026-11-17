@@ -56,8 +56,8 @@ or `pip install tripsort`.
 
 ## Development
 
-The project uses [uv](https://docs.astral.sh/uv/) for everything. The design and build plan are in
-[docs/SPEC.md](docs/SPEC.md), and settled decisions are logged in [docs/decisions.md](docs/decisions.md).
+The project uses [uv](https://docs.astral.sh/uv/) for everything. Settled design decisions are
+logged in [docs/decisions.md](docs/decisions.md).
 
 ```console
 uv sync                              # create .venv with the dev tools
