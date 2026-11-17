@@ -1,0 +1,87 @@
+[project]
+name = "tripsort"
+version = "0.0.1"
+description = "Offline Python library + CLI that merges trip photo zips, removes duplicates, and sorts photos by person, shot type, and category."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Shubh Dave" }]
+keywords = ["photos", "deduplication", "face-clustering", "clip", "offline", "cli"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+    "Typing :: Typed",
+]
+dependencies = [
+    "typer>=0.29.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/logn1602/tripsort"
+Repository = "https://github.com/logn1602/tripsort"
+Issues = "https://github.com/logn1602/tripsort/issues"
+
+[project.scripts]
+tripsort = "tripsort.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.2,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.1",
+    "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.5",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+    "PT",  # flake8-pytest-style
+    "PTH", # prefer pathlib
+    "RUF", # ruff-specific rules
+]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = [
+    "models: needs downloaded model weights (skipped unless the models are cached)",
+]
+
+[tool.coverage.run]
+source = ["tripsort"]
+branch = true
+patch = ["subprocess"]  # also measure `python -m tripsort` runs started by tests
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

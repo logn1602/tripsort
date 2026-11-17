@@ -221,3 +221,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# tripsort: never commit trip photos, indexes, review pages, eval data or model weights
+*.zip
+*.db
+.tripsort/
+review/
+sorted/
+eval/data/
+eval_data/
+*.onnx
