@@ -16,6 +16,7 @@ Usage, from the repo root on any OS:
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,30 @@ from pathlib import Path
 TESTPYPI_SIMPLE = "https://test.pypi.org/simple/"
 PYPI_SIMPLE = "https://pypi.org/simple/"
 PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
+
+# Index settings in the environment could add other indexes. They are dropped, and pip is
+# pointed at no config file, so the only indexes in play are the ones named on the command
+# lines below. (`uv --no-config` already skips uv.toml and pyproject.toml settings.)
+UV_INDEX_ENV = (
+    "UV_INDEX",
+    "UV_INDEX_URL",
+    "UV_DEFAULT_INDEX",
+    "UV_EXTRA_INDEX_URL",
+    "UV_FIND_LINKS",
+    "UV_INDEX_STRATEGY",
+    "UV_NO_INDEX",
+    "UV_CONFIG_FILE",
+)
+
+
+def isolated_env() -> dict[str, str]:
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() not in UV_INDEX_ENV and not key.upper().startswith("PIP_")
+    }
+    env["PIP_CONFIG_FILE"] = os.devnull  # pip then loads no config files at all
+    return env
 
 
 def project_version() -> str:
@@ -73,7 +98,7 @@ def download_wheel(version: str, dest: Path, python: str, timeout: float, interv
     while True:
         attempt += 1
         print(f"[attempt {attempt}] downloading tripsort {version} from TestPyPI", flush=True)
-        if subprocess.run(cmd, check=False).returncode == 0:
+        if subprocess.run(cmd, check=False, env=isolated_env()).returncode == 0:
             wheels = sorted(dest.glob("tripsort-*.whl"))
             if len(wheels) == 1:
                 return wheels[0]
@@ -86,7 +111,7 @@ def download_wheel(version: str, dest: Path, python: str, timeout: float, interv
 def run_from_wheel(wheel: Path, python: str) -> str:
     """Install the wheel with its dependencies from PyPI and return `tripsort --version`."""
     cmd = [*uv_tool_run(python), "--from", str(wheel), "tripsort", "--version"]
-    result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True, env=isolated_env())
     if result.returncode != 0:
         sys.exit(f"tripsort --version failed with exit code {result.returncode}:\n{result.stderr}")
     return result.stdout.strip()
