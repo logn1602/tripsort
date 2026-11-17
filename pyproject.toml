@@ -50,6 +50,9 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Ruff also formats code blocks in Markdown. The spec's examples use hand-aligned
+# comments, so leave that document as written.
+extend-exclude = ["docs/SPEC.md"]
 
 [tool.ruff.lint]
 select = [
