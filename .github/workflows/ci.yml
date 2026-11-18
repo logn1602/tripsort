@@ -63,3 +63,8 @@ jobs:
 
       - name: Run the installed CLI from the wheel
         run: uv run --isolated --no-project --with dist/tripsort-*.whl tripsort --version
+
+      # A tiny zip through `tripsort run`, from the wheel alone: catches files missing from
+      # the wheel (migrations, default config) that the test suite cannot see.
+      - name: Run tripsort end to end from the wheel
+        run: uv run --with dist/tripsort-*.whl tools/smoke_test.py
