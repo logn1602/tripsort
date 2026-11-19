@@ -25,9 +25,11 @@ from metrics import (  # the sibling module, importable once the path is set
     distance_histogram,
     false_merges_by_family,
     keeper_accuracy,
+    merge_source_photos,
     outcome,
     pairwise,
     recall_by_variant,
+    source_photo_merges,
     wrongly_left_out_by_family,
 )
 
@@ -105,6 +107,11 @@ def evaluate_dedupe(data_dir: Path, work: Path) -> dict[str, Any]:
         "negatives": roles["negative"],
         "thresholds": thresholds,
         "dedupe": outcome(items),
+        # When the sources are real photos, some may be real copies of each other; these
+        # merges have no ground truth. "dedupe" counts each as a mistake (the lower bound);
+        # this counts each as a correct merge (the upper bound).
+        "source_photo_merges": source_photo_merges(items),
+        "dedupe_if_source_merges_are_real_copies": outcome(merge_source_photos(items)),
         "wrongly_left_out_by_family": wrongly_left_out_by_family(items),
         "copies_left_in_all_by_variant": copies_left_in_all_by_variant(items),
         "keeper_accuracy": keeper_accuracy(items),

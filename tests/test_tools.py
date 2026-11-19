@@ -50,6 +50,18 @@ def test_outcome_metrics() -> None:
     assert (pairwise["precision"], pairwise["recall"]) == (0.5, round(1 / 3, 4))
 
 
+def test_source_photo_merges_give_a_range() -> None:
+    items = [
+        item("o1", "A", "original", "o1", "original"),
+        item("o2", "B", "original", "o1", "original"),  # filed under o1: a real copy, or not?
+        item("c2", "B", "copy", "o1", "whatsapp"),
+    ]
+    assert metrics.source_photo_merges(items) == 1
+    assert metrics.outcome(items)["precision"] == 0.0  # pessimistic: B vanished from all/
+    optimistic = metrics.outcome(metrics.merge_source_photos(items))
+    assert optimistic["precision"] == 1.0  # if o2 really was a copy of o1, nothing was lost
+
+
 def test_metrics_on_empty_input() -> None:
     assert metrics.outcome([])["precision"] == 1.0
     assert metrics.pairwise([]) == {"precision": 1.0, "recall": 1.0, "f1": 1.0}
@@ -122,6 +134,9 @@ def test_generator_from_a_photo_folder(tmp_path: Path) -> None:
     (photos / "day1").mkdir(parents=True)
     (photos / "day1" / "my_secret_name.jpg").write_bytes(jpeg(photo(1), exif=camera_exif()))
     (photos / "IMG_2.HEIC").write_bytes(heic(photo(2, (480, 360)), exif=camera_exif()))
+    (photos / "same_bytes_again.jpg").write_bytes(
+        (photos / "day1" / "my_secret_name.jpg").read_bytes()
+    )
     (photos / "broken.jpg").write_bytes(b"not an image")
     (photos / "notes.txt").write_text("skip me")
     out = tmp_path / "out"
@@ -132,7 +147,8 @@ def test_generator_from_a_photo_folder(tmp_path: Path) -> None:
     assert not any("secret" in n or "IMG_2" in n for n in names)
     text = (out / "truth.csv").read_text(encoding="utf-8")
     assert "secret" not in text
-    assert sum(1 for line in text.splitlines() if ",original," in line) == 2  # broken.jpg skipped
+    originals = sum(1 for line in text.splitlines() if ",original," in line)
+    assert originals == 2  # the exact duplicate and broken.jpg are skipped
 
 
 def test_generator_with_nothing_usable(tmp_path: Path) -> None:

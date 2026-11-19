@@ -29,6 +29,7 @@ Hard negatives (role "negative", each its own origin, all in originals.zip):
 
 import argparse
 import csv
+import hashlib
 import io
 import random
 import string
@@ -153,8 +154,13 @@ def _from_folder(folder: Path, limit: int | None, rng: random.Random) -> Iterato
     )
     if limit is not None and len(paths) > limit:
         paths = sorted(rng.sample(paths, limit))
+    seen: set[str] = set()
     for path in paths:
         data = path.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        if digest in seen:  # an exact duplicate is not an interesting test case
+            continue
+        seen.add(digest)
         try:
             image = open_image(data)
             image.load()

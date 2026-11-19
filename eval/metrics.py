@@ -32,6 +32,39 @@ def kept(item: Item) -> bool:
     return item.cluster == item.member
 
 
+def source_photo_merges(items: list[Item]) -> int:
+    """Source photos (role "original") filed under a different source photo.
+
+    With real photos as sources this is ambiguous: two of them may really be copies of each
+    other (a WhatsApp copy in one folder of a photo in another), which only a person can tell.
+    """
+    by_cluster: defaultdict[str, set[str]] = defaultdict(set)
+    for item in items:
+        if item.role == "original":
+            by_cluster[item.cluster].add(item.origin)
+    return sum(len(origins) - 1 for origins in by_cluster.values())
+
+
+def merge_source_photos(items: list[Item]) -> list[Item]:
+    """The items with origins joined wherever source photos share a cluster: the optimistic
+    reading, in which every such merge was a real copy."""
+    parent: dict[str, str] = {}
+
+    def find(origin: str) -> str:
+        while parent.get(origin, origin) != origin:
+            origin = parent[origin]
+        return origin
+
+    first: dict[str, str] = {}
+    for item in items:
+        if item.role == "original":
+            if item.cluster in first:
+                parent[find(item.origin)] = find(first[item.cluster])
+            else:
+                first[item.cluster] = item.origin
+    return [Item(i.member, find(i.origin), i.role, i.variant, i.cluster, i.distance) for i in items]
+
+
 def outcome(items: list[Item]) -> dict[str, float | int]:
     """Precision and recall of what is left out of all/ (see the module docstring)."""
     kept_origins = {item.origin for item in items if kept(item)}
