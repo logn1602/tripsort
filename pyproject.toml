@@ -1,6 +1,6 @@
 [project]
 name = "tripsort"
-version = "0.0.1"
+version = "0.1.0a1"
 description = "Offline Python library + CLI that merges trip photo zips, removes duplicates, and sorts photos by person, shot type, and category."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Shubh Dave" }]
 keywords = ["photos", "deduplication", "face-clustering", "clip", "offline", "cli"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
@@ -23,6 +23,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "imagehash>=4.3.2",
+    "numpy>=2.0",
+    "pi-heif>=1.4",
+    "pillow>=11.1",
+    "rich>=13.9",
     "typer>=0.29.1",
 ]
 
@@ -41,6 +46,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "mypy>=2.4.1",
+    "pillow-heif>=1.8",
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
@@ -69,9 +75,11 @@ select = [
 [tool.mypy]
 strict = true
 files = ["src"]
+mypy_path = "stubs"  # pi-heif ships without type hints
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]  # so tests can import tools/ and eval/
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 markers = [
     "models: needs downloaded model weights (skipped unless the models are cached)",

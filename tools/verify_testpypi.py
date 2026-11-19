@@ -9,6 +9,9 @@ installed from that local file into a throwaway environment where every dependen
 resolved from PyPI. TestPyPI can lag for a few minutes after an upload, so the download
 is retried until --timeout runs out.
 
+After `tripsort --version`, the same wheel runs tools/smoke_test.py: a tiny zip through
+`tripsort run`, which catches files missing from the wheel and broken dependency pins.
+
 Usage, from the repo root on any OS:
 
     uv run tools/verify_testpypi.py              # version from pyproject.toml
@@ -24,6 +27,9 @@ import tempfile
 import time
 import tomllib
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from smoke_test import run_smoke  # the sibling script; stdlib only
 
 TESTPYPI_SIMPLE = "https://test.pypi.org/simple/"
 PYPI_SIMPLE = "https://pypi.org/simple/"
@@ -140,11 +146,23 @@ def main() -> None:
         wheel = download_wheel(version, Path(tmp), args.python, args.timeout, args.interval)
         print(f"downloaded {wheel.name}; installing it with dependencies from PyPI", flush=True)
         output = run_from_wheel(wheel, args.python)
+        expected = f"tripsort {version}"
+        if output != expected:
+            sys.exit(f"expected {expected!r} but got {output!r}")
+        print(
+            f"OK: {output} (tripsort from TestPyPI, dependencies from PyPI, Python {args.python})"
+        )
 
-    expected = f"tripsort {version}"
-    if output != expected:
-        sys.exit(f"expected {expected!r} but got {output!r}")
-    print(f"OK: {output} (tripsort from TestPyPI, dependencies from PyPI, Python {args.python})")
+        print("running tools/smoke_test.py with the same wheel", flush=True)
+        work = Path(tmp) / "smoke"
+        work.mkdir()
+        try:
+            run_smoke(
+                [*uv_tool_run(args.python), "--from", str(wheel), "tripsort"], work, isolated_env()
+            )
+        except AssertionError as exc:
+            sys.exit(f"smoke test failed: {exc}")
+        print("OK: tripsort run works end to end")
 
 
 if __name__ == "__main__":
