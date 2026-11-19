@@ -38,6 +38,8 @@ CREATE TABLE media (
   camera_make     TEXT,
   camera_model    TEXT,
   lens_model      TEXT,
+  exposure_time   REAL,              -- seconds; compared to tell burst shots from copies
+  iso             INTEGER,
   gps_lat         REAL,
   gps_lon         REAL,
   phash           TEXT,              -- 64-bit pHash as 16 hex digits; NULL when not computed

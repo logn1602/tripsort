@@ -32,6 +32,8 @@ def c(
     nbytes: int = 1000,
     has_exif: bool | None = None,
     fmt: str = "JPEG",
+    exposure: float | None = None,
+    iso: int | None = None,
 ) -> CopyCandidate:
     return CopyCandidate(
         media_id=media_id,
@@ -44,6 +46,8 @@ def c(
         exif_datetime=exif,
         camera_model=model,
         format=fmt,
+        exposure_time=exposure,
+        iso=iso,
     )
 
 
@@ -180,3 +184,27 @@ def test_same_size_screenshots_are_never_copies() -> None:
     assert groups([ticket_1, whatsapp_of_ticket]) == {1: {3}}  # a lossy copy still matches
     resized_png = c(4, flip(1), size=(540, 1200), fmt="PNG")
     assert groups([ticket_1, resized_png]) == {1: {4}}  # a smaller PNG can still be a copy
+
+
+def test_same_second_shots_with_different_exposure_or_iso_are_never_copies() -> None:
+    a = c(1, exif="2026-07-14T10:23:45", model="Pixel 7", exposure=1 / 120, iso=100)
+    faster = c(2, BASE, exif="2026-07-14T10:23:45", model="Pixel 7", exposure=1 / 250, iso=100)
+    brighter = c(3, BASE, exif="2026-07-14T10:23:45", model="Pixel 7", exposure=1 / 120, iso=200)
+    assert groups([a, faster]) == {}
+    assert groups([a, brighter]) == {}
+
+
+def test_exposure_and_iso_count_only_when_both_files_record_them() -> None:
+    original = c(1, exif="2026-07-14T10:23:45", model="Pixel 7", exposure=1 / 120, iso=100)
+    kept_exif = c(
+        2,
+        flip(1),
+        size=(2048, 1536),
+        exif="2026-07-14T10:23:45",
+        model="Pixel 7",
+        exposure=0.008333,
+        iso=100,
+    )  # storage saver: same EXIF, rational rounded
+    no_exif = c(3, flip(2), size=(1600, 1200))  # WhatsApp: no EXIF at all
+    partial = c(4, flip(1), size=(1280, 960), exif="2026-07-14T10:23:45", iso=100)  # no exposure
+    assert groups([original, kept_exif, no_exif, partial]) == {1: {2, 3, 4}}

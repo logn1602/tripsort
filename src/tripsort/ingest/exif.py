@@ -25,6 +25,8 @@ class ExifInfo:
     gps_lat: float | None = None
     gps_lon: float | None = None
     orientation: int = 1
+    exposure_time: float | None = None  # seconds
+    iso: int | None = None
 
     @property
     def has_camera_exif(self) -> bool:
@@ -73,7 +75,28 @@ def _read(exif: Image.Exif) -> ExifInfo:
         gps_lat=lat,
         gps_lon=lon,
         orientation=orientation if isinstance(orientation, int) and 1 <= orientation <= 8 else 1,
+        exposure_time=parse_exposure(ifd.get(ExifTags.Base.ExposureTime)),
+        iso=parse_iso(ifd.get(ExifTags.Base.ISOSpeedRatings)),
     )
+
+
+def parse_exposure(value: Any) -> float | None:
+    """ExposureTime in seconds (a rational such as 1/120), or None when absent or absurd."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return seconds if math.isfinite(seconds) and 0 < seconds <= 3600 else None
+
+
+def parse_iso(value: Any) -> int | None:
+    """ISOSpeedRatings (PhotographicSensitivity); some cameras store several values."""
+    if isinstance(value, tuple | list):
+        value = value[0] if value else None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    iso = int(value)
+    return iso if 1 <= iso <= 10_000_000 else None
 
 
 def parse_exif_datetime(value: Any, subsec: Any = None) -> str | None:

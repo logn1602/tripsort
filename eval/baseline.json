@@ -5,79 +5,86 @@
       "copies_left_in_all_by_variant": {
         "heic_to_jpeg": 0.0,
         "recompress": 0.0,
-        "storage_saver": 0.0,
+        "storage_saver": 0.0133,
         "telegram": 0.0,
         "whatsapp": 0.0,
         "whatsapp_hd": 0.0
       },
       "copy_distance_histogram": {
-        "0": 663,
-        "2": 108
+        "0": 652,
+        "2": 117,
+        "4": 2
       },
       "dedupe": {
         "copies": 771,
-        "copies_left_in_all": 0,
-        "left_out": 920,
-        "precision": 0.838,
-        "recall": 1.0,
+        "copies_left_in_all": 2,
+        "left_out": 918,
+        "precision": 0.8377,
+        "recall": 0.9974,
         "wrongly_left_out": 149
       },
       "dedupe_if_source_merges_are_real_copies": {
         "copies": 771,
-        "copies_left_in_all": 0,
-        "left_out": 920,
-        "precision": 0.838,
-        "recall": 1.0,
+        "copies_left_in_all": 2,
+        "left_out": 918,
+        "precision": 0.8377,
+        "recall": 0.9974,
         "wrongly_left_out": 149
       },
       "grouping": {
         "grouped_with_another_photo_by_family": {
-          "burst_exif": 0.31,
+          "burst_exif": 0.17,
           "burst_no_exif": 1.0,
           "burst_same_second": 0.99,
+          "burst_same_second_exposure_differs": 0.19,
           "document": 0.0
         },
         "grouped_with_own_original_by_variant": {
           "heic_to_jpeg": 1.0,
           "recompress": 1.0,
-          "storage_saver": 1.0,
-          "telegram": 0.9933,
+          "storage_saver": 0.9867,
+          "telegram": 0.98,
           "whatsapp": 0.9933,
           "whatsapp_hd": 1.0
         },
         "pairwise": {
-          "f1": 0.9356,
-          "precision": 0.8816,
-          "recall": 0.9966
+          "f1": 0.9258,
+          "precision": 0.8712,
+          "recall": 0.9878
         }
       },
-      "ingest_and_analyze_seconds": 42.4,
-      "items": 1251,
+      "ingest_and_analyze_seconds": 37.1,
+      "items": 1351,
       "keeper_accuracy": 1.0,
       "negative_pair_distance_histogram": {
         "burst_exif": {
-          "0": 28,
-          "2": 19,
-          "4": 3
-        },
-        "burst_no_exif": {
-          "0": 33,
-          "2": 15,
+          "0": 31,
+          "2": 17,
           "4": 2
         },
+        "burst_no_exif": {
+          "0": 34,
+          "2": 15,
+          "4": 1
+        },
         "burst_same_second": {
-          "0": 31,
-          "2": 18,
+          "0": 33,
+          "2": 16,
+          "4": 1
+        },
+        "burst_same_second_exposure_differs": {
+          "0": 34,
+          "2": 15,
           "4": 1
         },
         "document": {
-          "10": 1,
+          "10": 4,
           "12": 1,
-          "4": 1,
-          ">12": 12
+          "8": 4,
+          ">12": 6
         }
       },
-      "negatives": 330,
+      "negatives": 430,
       "not_hashed": 0,
       "originals": 150,
       "source_photo_merges": 0,
@@ -87,11 +94,12 @@
         "phash_max_distance_both_exif": 2
       },
       "tripsort_version": "0.1.0a1",
-      "unique_files": 1251,
+      "unique_files": 1351,
       "wrongly_left_out_by_family": {
         "burst_exif": 0.0,
         "burst_no_exif": 1.0,
         "burst_same_second": 0.49,
+        "burst_same_second_exposure_differs": 0.0,
         "document": 0.0,
         "original": 0.0
       }

@@ -107,6 +107,7 @@ def test_dedupe_evaluation(synthetic: Path, tmp_path: Path) -> None:
     lost = result["wrongly_left_out_by_family"]
     assert lost["original"] == 0.0
     assert lost["burst_exif"] == 0.0  # different capture times are never copies
+    assert lost["burst_same_second_exposure_differs"] == 0.0  # different exposure or ISO
     assert lost["document"] == 0.0
     assert result["keeper_accuracy"] == 1.0
     text = json.dumps(result)

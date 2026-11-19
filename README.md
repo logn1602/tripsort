@@ -87,8 +87,10 @@ The methods return plain dataclasses, and the CLI only formats them.
   - when both files record a capture time, the times must match (to the sub-second when
     both record it) and the pHash distance must be 2 or less;
   - otherwise the distance must be 6 or less;
-  - files from different camera models, and same-size PNGs (screenshots of one app's
-    layout, such as boarding passes), are never treated as copies.
+  - files from different camera models, files whose EXIF exposure time or ISO differ (each
+    counts only when both files record it, so a copy that kept its EXIF is never split
+    off), and same-size PNGs (screenshots of one app's layout, such as boarding passes) are
+    never treated as copies.
 - **The keeper** of a group of copies is the version with the most pixels, then the one with
   EXIF, then the largest file. When a HEIC original and a same-size JPEG conversion are both
   present, that usually picks the JPEG, which opens everywhere.
@@ -96,7 +98,8 @@ The methods return plain dataclasses, and the CLI only formats them.
 The copies are left out of `all/` but never deleted; `--export-duplicates` shows each one
 next to the file that was kept. Two limits to know about: two messenger copies of different
 burst shots, without either original, look like copies of each other; and so do two burst
-shots taken in the same second by a camera that records no sub-seconds.
+shots taken in the same second, with the same exposure and ISO, by a camera that records no
+sub-seconds.
 
 ## Dates and file names
 

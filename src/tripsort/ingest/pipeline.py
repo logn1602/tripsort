@@ -295,6 +295,8 @@ def _insert_media(run: _Run, report: SourceReport, member: Member, hashed: Hashe
                 camera_make=exif.make,
                 camera_model=exif.model,
                 lens_model=exif.lens,
+                exposure_time=exif.exposure_time,
+                iso=exif.iso,
                 gps_lat=exif.gps_lat,
                 gps_lon=exif.gps_lon,
                 phash=analysis.phash,

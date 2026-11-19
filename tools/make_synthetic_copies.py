@@ -22,7 +22,10 @@ Copies (role "copy"):
 
 Hard negatives (role "negative", each its own origin, all in originals.zip):
   burst_exif         a burst sibling (1% camera shift, new noise), EXIF time one second later
-  burst_same_second  two burst siblings with the same EXIF second and no sub-seconds
+  burst_same_second  two burst siblings with the same EXIF second, no sub-seconds, and the
+                     same exposure and ISO (a locked burst: no EXIF field tells them apart)
+  burst_same_second_exposure_differs
+                     the same, but the exposure time and ISO differ between the two shots
   burst_no_exif      two burst siblings without EXIF (pHash alone cannot separate these)
   document           phone screenshots of one ticket layout with different text
 """
@@ -42,7 +45,7 @@ from pathlib import Path
 
 import numpy as np
 import pillow_heif  # encoding only; never registered with Pillow
-from PIL import ExifTags, Image, ImageDraw, ImageOps
+from PIL import ExifTags, Image, ImageDraw, ImageOps, TiffImagePlugin
 
 from tripsort.ingest.decode import open_image
 from tripsort.ingest.zip_reader import IMAGE_EXTENSIONS
@@ -55,7 +58,15 @@ COPY_VARIANTS = (
     "recompress",
     "heic_to_jpeg",
 )
-NEGATIVE_FAMILIES = ("burst_exif", "burst_same_second", "burst_no_exif", "document")
+NEGATIVE_FAMILIES = (
+    "burst_exif",
+    "burst_same_second",
+    "burst_same_second_exposure_differs",
+    "burst_no_exif",
+    "document",
+)
+EXPOSURES = ((1, 60), (1, 120), (1, 250), (1, 500))
+ISOS = (50, 100, 200, 400)
 _EXIF_TIME = "%Y:%m:%d %H:%M:%S"
 
 
@@ -188,6 +199,8 @@ def _generated(n: int, size: tuple[int, int], rng: random.Random) -> Iterator[Or
         ifd = exif.get_ifd(ExifTags.IFD.Exif)
         ifd[ExifTags.Base.DateTimeOriginal] = taken.strftime(_EXIF_TIME)
         ifd[ExifTags.Base.SubsecTimeOriginal] = f"{rng.randrange(1000):03d}"
+        ifd[ExifTags.Base.ExposureTime] = TiffImagePlugin.IFDRational(*rng.choice(EXPOSURES))
+        ifd[ExifTags.Base.ISOSpeedRatings] = rng.choice(ISOS)
         if i % 5 == 4:  # some phones store pixels sideways and rotate with EXIF
             exif[ExifTags.Base.Orientation] = 6
             image = image.transpose(Image.Transpose.ROTATE_90)
@@ -271,7 +284,15 @@ def _sibling(image: Image.Image, rng: random.Random) -> Image.Image:
     return Image.fromarray(pixels)
 
 
-def _burst_exif(base: str, offset_seconds: int, *, subsec: str | None, model: str) -> bytes:
+def _burst_exif(
+    base: str,
+    offset_seconds: int,
+    *,
+    subsec: str | None,
+    model: str,
+    exposure: tuple[int, int],
+    iso: int,
+) -> bytes:
     exif = Image.Exif()
     exif[ExifTags.Base.Make] = "Synthetic"
     exif[ExifTags.Base.Model] = model
@@ -280,17 +301,38 @@ def _burst_exif(base: str, offset_seconds: int, *, subsec: str | None, model: st
     ifd[ExifTags.Base.DateTimeOriginal] = stamp.strftime(_EXIF_TIME)
     if subsec is not None:
         ifd[ExifTags.Base.SubsecTimeOriginal] = subsec
+    ifd[ExifTags.Base.ExposureTime] = TiffImagePlugin.IFDRational(*exposure)
+    ifd[ExifTags.Base.ISOSpeedRatings] = iso
     return exif.tobytes()
+
+
+def _settings(ifd: dict[int, object]) -> tuple[tuple[int, int], int]:
+    """The original's exposure time and ISO, or typical values when it records none."""
+    exposure: tuple[int, int] = (1, 120)
+    value = ifd.get(ExifTags.Base.ExposureTime)
+    if (
+        isinstance(value, TiffImagePlugin.IFDRational)
+        and value.numerator > 0
+        and value.denominator > 0
+    ):
+        exposure = (int(value.numerator), int(value.denominator))
+    raw_iso = ifd.get(ExifTags.Base.ISOSpeedRatings)
+    if isinstance(raw_iso, tuple) and raw_iso:
+        raw_iso = raw_iso[0]
+    iso = int(raw_iso) if isinstance(raw_iso, int) and raw_iso > 0 else 100
+    return exposure, iso
 
 
 def _bursts(original: Original, rng: random.Random) -> Iterator[tuple[str, bytes]]:
     """Burst siblings of one original. The EXIF families need a capture time on the original;
     without one they would test the no-EXIF rule instead."""
     stamp, model = None, "Burst camera"
+    exposure, iso = (1, 120), 100
     if original.exif:
         info = Image.Exif()
         info.load(original.exif)
-        found = info.get_ifd(ExifTags.IFD.Exif).get(ExifTags.Base.DateTimeOriginal)
+        ifd = info.get_ifd(ExifTags.IFD.Exif)
+        found = ifd.get(ExifTags.Base.DateTimeOriginal)
         if isinstance(found, str) and len(found) >= 19:
             try:
                 datetime.strptime(found[:19], _EXIF_TIME)
@@ -299,13 +341,25 @@ def _bursts(original: Original, rng: random.Random) -> Iterator[tuple[str, bytes
             else:
                 stamp = found[:19]
         model = str(info.get(ExifTags.Base.Model) or model)
+        exposure, iso = _settings(ifd)
     if stamp is not None:
         for offset, subsec in ((1, "250"), (2, "500")):  # later shots of the same burst
-            exif = _burst_exif(stamp, offset, subsec=subsec, model=model)
+            exif = _burst_exif(
+                stamp, offset, subsec=subsec, model=model, exposure=exposure, iso=iso
+            )
             yield "burst_exif", _jpeg(_sibling(original.image, rng), 92, exif)
-        for _ in range(2):  # two shots in one second, and the camera writes no sub-seconds
-            exif = _burst_exif(stamp, 30, subsec=None, model=model)
+        for _ in range(2):  # two shots in one second; no sub-seconds; exposure locked
+            exif = _burst_exif(stamp, 30, subsec=None, model=model, exposure=exposure, iso=iso)
             yield "burst_same_second", _jpeg(_sibling(original.image, rng), 92, exif)
+        brighter = (exposure[0], max(1, exposure[1] // 2))  # twice as long
+        for shot_exposure, shot_iso in ((exposure, iso), (brighter, iso * 2)):
+            exif = _burst_exif(
+                stamp, 40, subsec=None, model=model, exposure=shot_exposure, iso=shot_iso
+            )
+            yield (
+                "burst_same_second_exposure_differs",
+                _jpeg(_sibling(original.image, rng), 92, exif),
+            )
     for _ in range(2):
         yield "burst_no_exif", _jpeg(_sibling(original.image, rng), 92)
 

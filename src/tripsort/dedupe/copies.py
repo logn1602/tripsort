@@ -6,7 +6,9 @@ Burst shots of one moment are often just as close, so EXIF decides:
 * Both files have EXIF capture times: the times must match (to the sub-second when both
   record it) and the distance must be at most ``phash_max_distance_both_exif``.
 * Otherwise the distance must be at most ``phash_max_distance``.
-* Two files that name different camera models are never copies.
+* Two files that name different camera models, or record different exposure times or ISO
+  values, are never copies. Each field counts only when both files record it: a true copy
+  keeps the EXIF it has, and a messenger copy has none, so neither is ever split off.
 * Two lossless images (PNG) of the same size are never copies: a recompressed copy is lossy,
   and screenshots of one app's layout (tickets, boarding passes) can be as close as copies.
 
@@ -16,6 +18,7 @@ keeper or becomes a keeper itself. A copy that resembles two burst shots therefo
 chain them into one group.
 """
 
+import math
 import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
@@ -41,6 +44,8 @@ class CopyCandidate:
     exif_datetime: str | None = None
     camera_model: str | None = None
     format: str | None = None
+    exposure_time: float | None = None
+    iso: int | None = None
 
     @property
     def pixels(self) -> int:
@@ -74,11 +79,20 @@ def same_capture_time(a: str, b: str) -> bool:
 
 
 LOSSLESS_FORMATS = frozenset({"PNG"})
+EXPOSURE_TOLERANCE = 0.01  # relative: 1/120 s and 1/125 s differ, rounding of one value does not
 
 
 def cannot_link(a: CopyCandidate, b: CopyCandidate) -> bool:
     """Evidence that two files are different pictures, whatever their pHashes say."""
     if a.camera_model and b.camera_model and a.camera_model != b.camera_model:
+        return True
+    if a.iso is not None and b.iso is not None and a.iso != b.iso:
+        return True
+    if (
+        a.exposure_time is not None
+        and b.exposure_time is not None
+        and not math.isclose(a.exposure_time, b.exposure_time, rel_tol=EXPOSURE_TOLERANCE)
+    ):
         return True
     if (
         a.format in LOSSLESS_FORMATS
@@ -161,7 +175,8 @@ def find_copy_groups(candidates: list[CopyCandidate], thresholds: Thresholds) ->
 def load_candidates(conn: sqlite3.Connection) -> list[CopyCandidate]:
     rows = conn.execute(
         "SELECT id, sha256, phash, width, height, has_exif, bytes, exif_datetime, camera_model, "
-        "format FROM media WHERE status = 'ok' AND kind = 'image' AND phash IS NOT NULL "
+        "format, exposure_time, iso FROM media "
+        "WHERE status = 'ok' AND kind = 'image' AND phash IS NOT NULL "
         "AND width > 0 AND height > 0"
     ).fetchall()
     return [
@@ -176,6 +191,8 @@ def load_candidates(conn: sqlite3.Connection) -> list[CopyCandidate]:
             exif_datetime=row[7],
             camera_model=row[8],
             format=row[9],
+            exposure_time=row[10],
+            iso=row[11],
         )
         for row in rows
     ]

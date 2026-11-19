@@ -4,7 +4,14 @@ import pytest
 from factories import encode, exif_block, jpeg, photo
 from PIL import Image
 
-from tripsort.ingest.exif import NO_EXIF, parse_exif_datetime, parse_offset, read_exif
+from tripsort.ingest.exif import (
+    NO_EXIF,
+    parse_exif_datetime,
+    parse_exposure,
+    parse_iso,
+    parse_offset,
+    read_exif,
+)
 
 
 def exif_of(data: bytes):  # type: ignore[no-untyped-def]
@@ -24,9 +31,13 @@ def test_full_camera_exif() -> None:
             lens="iPhone 15 front camera 2.69mm f/1.9",
             orientation=6,
             gps=(48.8584, 2.2945),
+            exposure=(1, 120),
+            iso=200,
         ),
     )
     info = exif_of(data)
+    assert info.exposure_time == pytest.approx(1 / 120)
+    assert info.iso == 200
     assert info.datetime == "2026-07-14T10:23:45.123"
     assert info.offset == "+05:30"
     assert (info.make, info.model) == ("Apple", "iPhone 15")
@@ -107,3 +118,32 @@ def test_parse_exif_datetime(value: object, subsec: object, expected: str | None
 )
 def test_parse_offset(value: object, expected: str | None) -> None:
     assert parse_offset(value) == expected
+
+
+def test_iso_stored_as_several_values() -> None:
+    info = exif_of(jpeg(photo(1, (64, 48)), exif=exif_block(iso=(400, 400))))
+    assert info.iso == 400
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(0.008, 0.008), (30, 30.0), (0, None), (-1, None), (7200, None), ("x", None), (None, None)],
+)
+def test_parse_exposure(value: object, expected: float | None) -> None:
+    assert parse_exposure(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (100, 100),
+        (3200.0, 3200),
+        ((50, 50), 50),
+        ((), None),
+        (0, None),
+        (True, None),
+        ("100", None),
+    ],
+)
+def test_parse_iso(value: object, expected: int | None) -> None:
+    assert parse_iso(value) == expected

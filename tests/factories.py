@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pillow_heif
-from PIL import ExifTags, Image, ImageOps
+from PIL import ExifTags, Image, ImageOps, TiffImagePlugin
 
 
 def photo(seed: int, size: tuple[int, int] = (1200, 900)) -> Image.Image:
@@ -34,6 +34,8 @@ def exif_block(
     lens: str | None = None,
     orientation: int | None = None,
     gps: tuple[float, float] | None = None,
+    exposure: tuple[int, int] | None = None,
+    iso: int | tuple[int, ...] | None = None,
 ) -> bytes:
     exif = Image.Exif()
     if make is not None:
@@ -53,6 +55,10 @@ def exif_block(
         ifd[ExifTags.Base.DateTimeDigitized] = digitized
     if lens is not None:
         ifd[ExifTags.Base.LensModel] = lens
+    if exposure is not None:
+        ifd[ExifTags.Base.ExposureTime] = TiffImagePlugin.IFDRational(*exposure)
+    if iso is not None:
+        ifd[ExifTags.Base.ISOSpeedRatings] = iso
     if gps is not None:
         lat, lon = gps
         g = exif.get_ifd(ExifTags.IFD.GPSInfo)
@@ -72,7 +78,13 @@ def _dms(value: float) -> tuple[float, float, float]:
 
 def camera_exif(datetime: str = "2026:07:14 10:23:45", **extra: object) -> bytes:
     """EXIF the way a phone camera writes it."""
-    values: dict[str, object] = {"make": "Google", "model": "Pixel 7", "datetime": datetime}
+    values: dict[str, object] = {
+        "make": "Google",
+        "model": "Pixel 7",
+        "datetime": datetime,
+        "exposure": (1, 120),
+        "iso": 100,
+    }
     values.update(extra)
     return exif_block(**values)  # type: ignore[arg-type]
 
