@@ -166,3 +166,29 @@ def test_smoke_test_passes_against_this_install(tmp_path: Path) -> None:
 def test_smoke_test_reports_failures(capsys: pytest.CaptureFixture[str]) -> None:
     assert smoke_test.main([sys.executable, "-c", "import sys; sys.exit(3)"]) == 1
     assert "FAILED" in capsys.readouterr().err
+
+
+def test_generator_holds_one_photo_at_a_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = make_synthetic_copies._generated
+    still_open: set[int] = set()
+
+    def tracking(n, size, rng):  # type: ignore[no-untyped-def]
+        for original in real(n, size, rng):
+            assert not still_open, "the previous photo is still decoded"
+            key = id(original)
+            still_open.add(key)
+            close = original.image.close
+
+            def close_and_forget(close=close, key=key):  # type: ignore[no-untyped-def]
+                still_open.discard(key)
+                close()
+
+            original.image.close = close_and_forget
+            yield original
+
+    monkeypatch.setattr(make_synthetic_copies, "_generated", tracking)
+    argv = [str(tmp_path / "out"), "--generate", "4", "--size", "320x240", "--documents", "1"]
+    assert make_synthetic_copies.main(argv) == 0
+    assert not still_open

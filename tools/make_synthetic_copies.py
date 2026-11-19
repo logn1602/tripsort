@@ -107,24 +107,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=2026)
     args = parser.parse_args(argv)
 
-    rng = random.Random(args.seed)
+    # Two random streams, so the originals do not depend on how much randomness the
+    # copies and bursts use.
+    source_rng = random.Random(args.seed)
+    rng = random.Random(args.seed + 1)
     args.out.mkdir(parents=True, exist_ok=True)
     if args.photos is not None:
-        originals = list(_from_folder(args.photos, args.limit, rng))
+        originals = _from_folder(args.photos, args.limit, source_rng)
     else:
         width, height = (int(v) for v in args.size.lower().split("x"))
-        originals = list(_generated(args.generate, (width, height), rng))
-    if not originals:
-        print("no usable photos found", file=sys.stderr)
-        return 1
-    documents = args.documents if args.documents is not None else max(4, len(originals) // 5)
+        originals = _generated(args.generate, (width, height), source_rng)
 
     rows: list[Row] = []
+    count = negatives = 0
     with (
         zipfile.ZipFile(args.out / "originals.zip", "w") as originals_zip,
         zipfile.ZipFile(args.out / "copies.zip", "w") as copies_zip,
     ):
+        # One photo at a time: only the photo being processed is decoded in memory.
         for i, original in enumerate(originals):
+            count += 1
             origin = f"o{i:05d}"
             member = f"originals/{origin}{original.extension}"
             originals_zip.writestr(member, original.data)
@@ -137,16 +139,23 @@ def main(argv: list[str] | None = None) -> int:
                     rows.append(Row("copies", member, origin, "copy", variant))
             if i % args.negatives_every == 0:
                 for family, data in _bursts(original, rng):
-                    n = sum(1 for r in rows if r.role == "negative")
-                    negative = f"n{n:05d}"
+                    negative = f"n{negatives:05d}"
+                    negatives += 1
                     member = f"negatives/{negative}_{family}.jpg"
                     originals_zip.writestr(member, data)
                     rows.append(Row("originals", member, negative, "negative", family))
             original.image.close()
-        for k, data in enumerate(_documents(documents, rng)):
-            member = f"negatives/d{k:05d}_document.png"
-            originals_zip.writestr(member, data)
-            rows.append(Row("originals", member, f"d{k:05d}", "negative", "document"))
+        if count:
+            documents = args.documents if args.documents is not None else max(4, count // 5)
+            for k, data in enumerate(_documents(documents, rng)):
+                member = f"negatives/d{k:05d}_document.png"
+                originals_zip.writestr(member, data)
+                rows.append(Row("originals", member, f"d{k:05d}", "negative", "document"))
+    if count == 0:
+        for name in ("originals.zip", "copies.zip"):
+            (args.out / name).unlink(missing_ok=True)
+        print("no usable photos found", file=sys.stderr)
+        return 1
 
     with (args.out / "truth.csv").open("w", newline="", encoding="utf-8") as fp:
         writer = csv.writer(fp)
