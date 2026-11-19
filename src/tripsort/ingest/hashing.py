@@ -7,7 +7,10 @@ from dataclasses import dataclass
 import imagehash
 from PIL import Image
 
-PHASH_ALGORITHM = "imagehash.phash, hash_size=8 (64 bits), on the EXIF-oriented image"
+PHASH_ALGORITHM = (
+    "imagehash.phash, hash_size=8 (64 bits), on the EXIF-oriented image box-reduced to about "
+    "256 px on its short side"
+)
 
 
 @dataclass(frozen=True)

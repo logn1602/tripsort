@@ -20,7 +20,8 @@ from PIL import Image, ImageOps
 from tripsort.ingest.exif import NO_EXIF, ExifInfo, read_exif
 from tripsort.ingest.hashing import phash_hex
 
-DECODE_MAX_SIDE = 1600
+DECODE_MAX_SIDE = 1600  # JPEGs are decoded in draft mode to about this size
+PHASH_SOURCE_SIDE = 256  # shorter side, in pixels, the pHash input is reduced towards
 _SNIFFED_FORMATS = ("JPEG", "PNG", "WEBP", "HEIF")
 _DRAFT_FORMATS = frozenset({"JPEG", "MPO"})
 _SAFE_MODES = frozenset({"1", "L", "LA", "P", "PA", "RGB", "RGBA", "CMYK", "YCbCr"})
@@ -119,7 +120,7 @@ def _analyze(data: bytes, max_side: int) -> ImageAnalysis:
             raise UnreadableImageError(_describe(exc)) from exc
 
         try:
-            phash = phash_hex(_prepare(image, max_side))
+            phash = phash_hex(_prepare(image))
         except Exception as exc:  # keep the file, just without a pHash
             return ImageAnalysis(
                 fmt, width, height, exif, None, True, f"no pHash: {_describe(exc)}"
@@ -127,11 +128,18 @@ def _analyze(data: bytes, max_side: int) -> ImageAnalysis:
     return ImageAnalysis(fmt, width, height, exif, phash, True)
 
 
-def _prepare(image: Image.Image, max_side: int) -> Image.Image:
-    """Shrink first (cheap and memory-friendly), then apply the EXIF orientation."""
+def _prepare(image: Image.Image) -> Image.Image:
+    """The image the pHash is computed from: shrunk, then turned by its EXIF orientation.
+
+    The pHash only looks at a 32x32 version, so a fast integer reduction to a few hundred
+    pixels comes first; resampling a 1600 px image straight to 32 px costs far more and
+    changes nothing at the frequencies the pHash keeps.
+    """
     if image.mode not in _SAFE_MODES:
         image = image.convert("L" if len(image.getbands()) == 1 else "RGB")
-    image.thumbnail((max_side, max_side), Image.Resampling.BICUBIC)
+    factor = min(image.size) // PHASH_SOURCE_SIDE
+    if factor > 1:
+        image = image.reduce(factor)  # keeps .info, so the EXIF orientation still applies
     return ImageOps.exif_transpose(image)
 
 
