@@ -1,6 +1,6 @@
 [project]
 name = "tripsort"
-version = "0.0.1"
+version = "0.1.0a1"
 description = "Offline Python library + CLI that merges trip photo zips, removes duplicates, and sorts photos by person, shot type, and category."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Shubh Dave" }]
 keywords = ["photos", "deduplication", "face-clustering", "clip", "offline", "cli"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
