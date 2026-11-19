@@ -115,10 +115,18 @@ def test_unreadable_zip_entries_exit_2_with_advice(tmp_path: Path) -> None:
     assert "without encryption" in plain(result.output)
 
 
-def test_refs_is_accepted_but_ignored(clean_zip: Path, tmp_path: Path) -> None:
-    result = invoke("run", clean_zip, "-o", tmp_path / "sorted", "--refs", tmp_path)
+def test_refs_with_no_photos_names_nobody(clean_zip: Path, tmp_path: Path) -> None:
+    (tmp_path / "refs").mkdir()
+    result = invoke("run", clean_zip, "-o", tmp_path / "sorted", "--refs", tmp_path / "refs")
     assert result.exit_code == 0
-    assert "--refs is ignored" in plain(result.output)
+    assert "refs/ named 0 of 0 people" in plain(result.output)
+
+
+def test_missing_refs_folder_fails_before_any_work(clean_zip: Path, tmp_path: Path) -> None:
+    result = invoke("run", clean_zip, "-o", tmp_path / "sorted", "--refs", tmp_path / "nope")
+    assert result.exit_code == 1
+    assert "no such folder" in plain(result.output)
+    assert not (tmp_path / "sorted").exists()
 
 
 def test_missing_zip_is_a_user_error(tmp_path: Path) -> None:
@@ -176,3 +184,11 @@ def test_clean(clean_zip: Path, tmp_path: Path) -> None:
     assert not (out / ".tripsort").exists()
     assert (out / "all").is_dir()  # exported folders stay
     assert "Nothing to clean" in invoke("clean", out, "--yes").output
+
+
+def test_ingest_without_zips_only_catches_up(clean_zip: Path, tmp_path: Path) -> None:
+    out = tmp_path / "sorted"
+    assert invoke("run", clean_zip, "-o", out).exit_code == 0
+    result = invoke("ingest", out)
+    assert result.exit_code == 0
+    assert "wait for a face scan" not in plain(result.output)

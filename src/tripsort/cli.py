@@ -23,10 +23,12 @@ from rich.progress import Progress as RichProgressBar
 from typer.core import TyperGroup
 
 from tripsort import __version__
+from tripsort.stats import count  # standard library only, so --version stays fast
 
 if TYPE_CHECKING:
     from tripsort.api import AnalyzeResult, Project
     from tripsort.export.writer import ExportResult
+    from tripsort.faces.people import RefsResult
     from tripsort.ingest.pipeline import IngestResult
 
 EXIT_OK = 0
@@ -92,6 +94,12 @@ ZipsArg = Annotated[
     typer.Argument(metavar="ZIP", help="Zip files of photos and videos, usually one per person."),
 ]
 ProjectArg = Annotated[Path, typer.Argument(metavar="PROJECT", help="The project (output) folder.")]
+RefsOpt = Annotated[
+    Path | None,
+    typer.Option(
+        help="Folder with one clear photo per person (NAME.jpg or NAME/*.jpg), used to name people."
+    ),
+]
 CopyOpt = Annotated[
     bool, typer.Option("--copy", help="Make copies instead of hardlinks in the review folders.")
 ]
@@ -117,24 +125,21 @@ def run(
         Path,
         typer.Option("--out", "-o", help="Output folder for the sorted files and the index."),
     ],
-    refs: Annotated[
-        Path | None,
-        typer.Option(help="Folder with one clear photo per person, used to name people."),
-    ] = None,
+    refs: RefsOpt = None,
     copy: CopyOpt = False,
     dry_run: DryRunOpt = False,
     export_duplicates: DuplicatesOpt = False,
     benchmark: BenchmarkOpt = False,
 ) -> None:
     """Ingest, analyze, and export in one step."""
-    if refs is not None:
-        err.print(
-            "[yellow]warning:[/] --refs is ignored: people folders arrive in a later release."
-        )
+    _check_refs(refs)
     with _project(out) as project:
         ingested = project.ingest(zips, progress=_RichProgress())
         _show_ingest(ingested)
-        analyzed = project.analyze()
+        if refs is not None and ingested.face_problem:
+            err.print("[yellow]warning:[/] --refs is not used: the face models are not available.")
+            refs = None
+        analyzed = _analyze_with_refs(project, refs)
         typer.echo(analyzed.summary())
         exported = project.export(
             hardlinks=not copy,
@@ -150,21 +155,33 @@ def run(
 
 
 @app.command()
-def ingest(project_dir: ProjectArg, zips: ZipsArg, benchmark: BenchmarkOpt = False) -> None:
-    """Add zips to a project: hash every file and decode only the new ones."""
+def ingest(
+    project_dir: ProjectArg,
+    zips: Annotated[
+        list[Path] | None,
+        typer.Argument(
+            metavar="[ZIP]...",
+            help="Zips to add. With none, only photos not yet scanned for faces are scanned.",
+        ),
+    ] = None,
+    benchmark: BenchmarkOpt = False,
+) -> None:
+    """Add zips to a project: hash every file, and decode and scan for faces only new ones."""
     with _project(project_dir) as project:
-        result = project.ingest(zips, progress=_RichProgress())
+        result = project.ingest(zips or [], progress=_RichProgress())
         _show_ingest(result)
         if benchmark:
             _show_benchmark(result, None, None)
-    raise typer.Exit(EXIT_PARTIAL if result.problems else EXIT_OK)
+    partial = result.problems or result.face_problem or result.faces_pending
+    raise typer.Exit(EXIT_PARTIAL if partial else EXIT_OK)
 
 
 @app.command()
-def analyze(project_dir: ProjectArg, benchmark: BenchmarkOpt = False) -> None:
-    """Resolve dates and find duplicates and copies (reads only the index)."""
+def analyze(project_dir: ProjectArg, refs: RefsOpt = None, benchmark: BenchmarkOpt = False) -> None:
+    """Resolve dates, find copies, and sort faces into people (reads only the index)."""
+    _check_refs(refs)
     with _project(project_dir) as project:
-        result = project.analyze()
+        result = _analyze_with_refs(project, refs)
         typer.echo(result.summary())
         if benchmark:
             _show_benchmark(None, result, None)
@@ -198,22 +215,119 @@ def clean(
     project_dir: ProjectArg,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")] = False,
 ) -> None:
-    """Delete the project's index (.tripsort/: hashes, dates, camera and GPS data).
+    """Delete the project's index (.tripsort/: hashes, dates, camera and GPS data, faces,
+    face embeddings, and names) and the review pages (review/, which show face crops).
 
     The exported folders and manifest.json are kept.
     """
     from tripsort.api import clean as clean_index
+    from tripsort.faces.review import REVIEW_DIR
     from tripsort.index.db import INDEX_DIR_NAME
 
-    target = project_dir / INDEX_DIR_NAME
-    if not target.exists():
-        typer.echo(f"Nothing to clean: {target} does not exist.")
+    targets = [p for p in (project_dir / INDEX_DIR_NAME, project_dir / REVIEW_DIR) if p.exists()]
+    if not targets:
+        typer.echo(f"Nothing to clean: {project_dir / INDEX_DIR_NAME} does not exist.")
         return
+    listed = " and ".join(str(t) for t in targets)
     if not yes:
-        typer.confirm(f"Delete {target}?", abort=True)
+        typer.confirm(f"Delete {listed}?", abort=True)
     with _user_errors():
         clean_index(project_dir)
-    typer.echo(f"Deleted {target}.")
+    typer.echo(f"Deleted {listed}.")
+
+
+people_app = typer.Typer(
+    cls=_Group,
+    help="List, review, rename, and merge the people found in a project.",
+    no_args_is_help=True,
+)
+app.add_typer(people_app, name="people")
+
+
+@people_app.command("list")
+def people_list(project_dir: ProjectArg) -> None:
+    """Show everyone found, most photos first."""
+    with _project(project_dir) as project:
+        people = project.people.all()
+    if not people:
+        typer.echo("No people found yet.")
+        return
+    width = max(len("NAME"), *(len(p.name) for p in people))
+    typer.echo(f"{'NAME':<{width}}  {'PHOTOS':>6}  {'SOLO':>5}  {'FACES':>6}  NAMED BY")
+    for p in people:
+        named_by = {"refs": "refs/", "user": "you"}.get(p.named_by or "", "-")
+        typer.echo(f"{p.name:<{width}}  {p.photos:>6,}  {p.solo:>5,}  {p.faces:>6,}  {named_by}")
+
+
+@people_app.command("review")
+def people_review(
+    project_dir: ProjectArg,
+    per_person: Annotated[
+        int, typer.Option(min=1, help="Sample faces shown for each person.")
+    ] = 24,
+) -> None:
+    """Write review/people.html: sample face crops for each person, to check before sharing."""
+    with _project(project_dir) as project:
+        path = project.people.review(per_person=per_person, progress=_RichProgress())
+    typer.echo(f"Wrote {path}")
+    typer.echo("It shows faces, so keep it private; `tripsort clean` deletes it with the index.")
+
+
+@people_app.command("rename")
+def people_rename(
+    project_dir: ProjectArg,
+    person: Annotated[str, typer.Argument(help="Current name, or person_NN.")],
+    new_name: Annotated[str, typer.Argument(metavar="NEW_NAME", help="The name to give.")],
+) -> None:
+    """Name a person (or rename them). Run `tripsort export` afterwards to move the folder."""
+    with _project(project_dir) as project:
+        info = project.people.rename(person, new_name)
+    typer.echo(f"person_{info.number:02d} is now {info.name} ({count(info.photos, 'photo')}).")
+
+
+@people_app.command("merge")
+def people_merge(
+    project_dir: ProjectArg,
+    person: Annotated[str, typer.Argument(help="The person to merge away.")],
+    into: Annotated[str, typer.Argument(help="The person who keeps every photo.")],
+) -> None:
+    """Say two people are one, for example one person split by sunglasses."""
+    with _project(project_dir) as project:
+        info = project.people.merge(person, into)
+    typer.echo(f"Merged {person} into {info.name}, who now has {count(info.photos, 'photo')}.")
+
+
+models_app = typer.Typer(
+    cls=_Group, help="The face models tripsort downloads on first use.", no_args_is_help=True
+)
+app.add_typer(models_app, name="models")
+
+
+@models_app.command("list")
+def models_list() -> None:
+    """Show each model, its license, and whether it is downloaded."""
+    from tripsort.models.download import model_dir, model_status
+    from tripsort.models.registry import ALL_MODELS
+    from tripsort.stats import human_bytes
+
+    typer.echo(f"Model folder: {model_dir()}")
+    for m in ALL_MODELS:
+        typer.echo(
+            f"  {m.name:<6} {m.version:<8} {human_bytes(m.size):>8}  {m.license:<10} "
+            f"{model_status(m):<8} {m.purpose}"
+        )
+
+
+@models_app.command("download")
+def models_download() -> None:
+    """Download and verify every model now, for example before going offline."""
+    from tripsort.models.download import ensure_models
+    from tripsort.models.registry import ALL_MODELS
+
+    with _user_errors():
+        paths = ensure_models(ALL_MODELS, _RichProgress())
+    for name, path in paths.items():
+        typer.echo(f"{name}: {path}")
 
 
 @contextmanager
@@ -242,12 +356,34 @@ def _project(folder: Path) -> Iterator["Project"]:
             project.close()
 
 
+def _check_refs(refs: Path | None) -> None:
+    if refs is not None and not refs.is_dir():
+        err.print(f"[red]error:[/] {refs}: no such folder")
+        raise typer.Exit(EXIT_USER_ERROR)
+
+
+def _analyze_with_refs(project: "Project", refs: Path | None) -> "AnalyzeResult":
+    """Analyze; with ``refs``, embed the reference photos first so they name people."""
+    if refs is None:
+        return project.analyze()
+    with _user_errors():
+        named = project.people.name_from_refs(refs)
+    _show_refs(named)
+    return named.analysis
+
+
+def _show_refs(result: "RefsResult") -> None:
+    for problem in result.problems:
+        err.print(f"[yellow]refs: {problem}[/]")
+    typer.echo(result.summary())
+
+
 def _exit_code(
     project: "Project", ingested: "IngestResult | None", exported: "ExportResult"
 ) -> int:
     stats = project.stats()
     partial = (
-        bool(ingested and ingested.problems)
+        bool(ingested and (ingested.problems or ingested.face_problem or ingested.faces_pending))
         or bool(exported.problems)
         or stats.unreadable > 0
         or stats.read_failures > 0

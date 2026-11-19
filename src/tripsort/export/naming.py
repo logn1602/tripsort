@@ -10,9 +10,14 @@ from pathlib import PurePosixPath
 
 MAX_NAME = 100  # characters per name: duplicates/<name>/<name> stays short on Windows
 MAX_LABEL = 32
+MAX_FOLDER = 64  # a person's folder name
 _MAX_EXTENSION = 10
 _FORBIDDEN = frozenset('<>:"/\\|?*')
 _WHITESPACE = re.compile(r"\s+")
+_RESERVED = frozenset(  # names Windows reserves for devices, with or without an extension
+    {"con", "prn", "aux", "nul"}
+    | {f"{port}{n}" for port in ("com", "lpt") for n in "0123456789¹²³"}
+)
 
 
 def sanitize(text: str) -> str:
@@ -52,6 +57,14 @@ def export_name(taken_at: str | None, label: str, member_path: str) -> str:
     room = max(8, MAX_NAME - len(prefix) - len(extension))
     stem = stem[:room].rstrip(". ") or "file"
     return f"{prefix}{stem}{extension}"
+
+
+def person_folder(name: str) -> str:
+    """The folder for a person's name: 'Sam / Alex' -> 'Sam _ Alex', 'Con' -> 'Con_'."""
+    cleaned = _WHITESPACE.sub(" ", sanitize(name))[:MAX_FOLDER].rstrip(". ") or "person"
+    if cleaned.split(".", 1)[0].strip().casefold() in _RESERVED:
+        cleaned += "_"
+    return cleaned
 
 
 def numbered(name: str, n: int) -> str:

@@ -4,17 +4,20 @@ The project file may only set keys that exist in the defaults, so a typo is an e
 instead of a silently ignored setting.
 """
 
+import dataclasses
 import hashlib
 import json
 import tomllib
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from importlib.resources import files
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from tripsort.errors import ConfigError
 
 PROJECT_CONFIG_NAME = "tripsort.toml"
+CLUSTER_METHODS = ("hdbscan", "agglomerative")
 
 # Allowed range for each numeric setting, inclusive.
 _RANGES: dict[str, tuple[float, float]] = {
@@ -22,7 +25,19 @@ _RANGES: dict[str, tuple[float, float]] = {
     "phash_max_distance_both_exif": (0, 64),
     "phash_max_distance_both_exif_resized": (0, 64),
     "copy_max_aspect_diff": (0.0, 1.0),
+    "min_face_score": (0.5, 1.0),  # detections below 0.5 are not stored at all
+    "foreground_min_ratio": (0.0, 1.0),
+    "foreground_min_height": (0.0, 1.0),
+    "min_cluster_size": (2, 10_000),
+    "min_samples": (1, 10_000),
+    "agglomerative_min_similarity": (-1.0, 1.0),
+    "member_min_similarity": (-1.0, 1.0),
+    "attach_min_similarity": (-1.0, 1.0),
+    "ref_min_similarity": (-1.0, 1.0),
+    "background_min_similarity": (-1.0, 1.0),
 }
+# Allowed values for each text setting.
+_CHOICES: dict[str, tuple[str, ...]] = {"cluster_method": CLUSTER_METHODS}
 
 
 @dataclass(frozen=True)
@@ -36,10 +51,28 @@ class Thresholds:
 
 
 @dataclass(frozen=True)
+class PeopleSettings:
+    """How faces become people and shot types. All of it applies in ``analyze``."""
+
+    min_face_score: float
+    foreground_min_ratio: float
+    foreground_min_height: float
+    cluster_method: str
+    min_cluster_size: int
+    min_samples: int
+    agglomerative_min_similarity: float
+    member_min_similarity: float
+    attach_min_similarity: float
+    ref_min_similarity: float
+    background_min_similarity: float
+
+
+@dataclass(frozen=True)
 class Config:
     """The effective configuration of a project."""
 
     thresholds: Thresholds
+    people: PeopleSettings
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -83,6 +116,12 @@ def _merge(data: dict[str, Any], override: dict[str, Any], path: Path) -> None:
 
 
 def _check_value(where: str, key: str, value: Any, default: Any) -> None:
+    if isinstance(default, str):
+        choices = _CHOICES[key]
+        if value not in choices:
+            allowed = ", ".join(f'"{c}"' for c in choices)
+            raise ConfigError(f"{where} must be one of {allowed}, got {value!r}")
+        return
     if isinstance(default, bool) or isinstance(value, bool):
         raise ConfigError(f"{where} must be a number")
     if isinstance(default, int) and not isinstance(value, int):
@@ -94,18 +133,17 @@ def _check_value(where: str, key: str, value: Any, default: Any) -> None:
         raise ConfigError(f"{where} must be between {low} and {high}, got {value!r}")
 
 
+def _section(cls: Any, values: dict[str, Any]) -> Any:
+    """Build a settings dataclass, converting each value to its field's type (int, float, str)."""
+    convert = {f.name: cast(Callable[[Any], Any], f.type) for f in dataclasses.fields(cls)}
+    return cls(**{name: to_type(values[name]) for name, to_type in convert.items()})
+
+
 def _build(data: dict[str, Any], where: str) -> Config:
     try:
-        thresholds = data["thresholds"]
         return Config(
-            thresholds=Thresholds(
-                phash_max_distance=int(thresholds["phash_max_distance"]),
-                phash_max_distance_both_exif=int(thresholds["phash_max_distance_both_exif"]),
-                phash_max_distance_both_exif_resized=int(
-                    thresholds["phash_max_distance_both_exif_resized"]
-                ),
-                copy_max_aspect_diff=float(thresholds["copy_max_aspect_diff"]),
-            )
+            thresholds=_section(Thresholds, data["thresholds"]),
+            people=_section(PeopleSettings, data["people"]),
         )
     except (KeyError, TypeError, ValueError) as exc:  # pragma: no cover - packaged file is tested
         raise ConfigError(f"{where} is missing or has a bad value: {exc}") from exc

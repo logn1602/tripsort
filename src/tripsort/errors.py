@@ -26,3 +26,11 @@ class IndexVersionError(UserError):
 
 class ExportError(UserError):
     """The export cannot start, for example because the disk is too full."""
+
+
+class ModelError(UserError):
+    """A model file could not be downloaded or does not match its pinned SHA-256."""
+
+
+class PeopleError(UserError):
+    """A people command cannot be done, such as renaming a person who does not exist."""

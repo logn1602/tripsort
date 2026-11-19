@@ -55,9 +55,28 @@ def test_hash_is_stable() -> None:
         ("[thresholds]\nphash_max_distance = 65\n", "must be between 0 and 64"),
         ("[thresholds]\ncopy_max_aspect_diff = -0.1\n", "must be between"),
         ("[thresholds\n", "tripsort.toml"),
+        ('[people]\ncluster_method = "kmeans"\n', 'must be one of "hdbscan", "agglomerative"'),
+        ("[people]\ncluster_method = 3\n", "must be one of"),
+        ("[people]\nmin_cluster_size = 1\n", "must be between 2 and"),
+        ("[people]\nmin_face_score = 0.4\n", "must be between 0.5 and 1.0"),
+        ("[people]\nref_min_similarity = 1.5\n", "must be between"),
     ],
 )
 def test_invalid_project_file(tmp_path: Path, text: str, message: str) -> None:
     folder = write_override(tmp_path, text)
     with pytest.raises(ConfigError, match=message.replace("[", r"\[").replace("]", r"\]")):
         load_config(folder)
+
+
+def test_people_defaults_and_overrides(tmp_path: Path) -> None:
+    people = load_config().people
+    assert (people.cluster_method, people.min_cluster_size) == ("hdbscan", 3)
+    assert (people.foreground_min_ratio, people.foreground_min_height) == (0.3, 0.03)
+    folder = write_override(
+        tmp_path, '[people]\ncluster_method = "agglomerative"\nattach_min_similarity = 1\n'
+    )
+    changed = load_config(folder)
+    assert changed.people.cluster_method == "agglomerative"
+    assert changed.people.attach_min_similarity == 1.0
+    assert isinstance(changed.people.attach_min_similarity, float)
+    assert changed.hash != load_config().hash

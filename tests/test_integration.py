@@ -26,9 +26,9 @@ def decode_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     calls: list[int] = []
     real = pipeline.analyze_image
 
-    def counting(data: bytes):  # type: ignore[no-untyped-def]
+    def counting(data: bytes, **kwargs):  # type: ignore[no-untyped-def]
         calls.append(len(data))
-        return real(data)
+        return real(data, **kwargs)
 
     monkeypatch.setattr(pipeline, "analyze_image", counting)
     return calls

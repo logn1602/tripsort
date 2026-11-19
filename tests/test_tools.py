@@ -159,6 +159,7 @@ def test_generator_with_nothing_usable(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.models  # a subprocess: it scans for faces with the real (cached) models
 def test_smoke_test_passes_against_this_install(tmp_path: Path) -> None:
     smoke_test.run_smoke([sys.executable, "-m", "tripsort"], tmp_path)
 

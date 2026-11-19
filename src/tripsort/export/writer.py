@@ -3,6 +3,9 @@
 * ``all/`` holds each kept file once, extracted from its zip. ``unreadable/`` holds files
   whose bytes could be read but not decoded. With ``export_duplicates``, ``duplicates/<keeper>/``
   shows each keeper (a hardlink into ``all/``) next to the copies that were left out.
+* ``people/<name>/`` and ``shots/{solo,group,selfie}/`` hold hardlinks into ``all/``, so a
+  group photo in three people's folders takes disk space once. A renamed or merged person's
+  links move to the new folder.
 * What an export writes is recorded in the index (``exported_files``). The next export
   writes only what is missing, removes files it wrote earlier that are no longer wanted
   (only if they are unchanged since), leaves files edited since the last export alone, and
@@ -22,21 +25,24 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from types import TracebackType
-from typing import Self
 
-from tripsort.errors import ExportError, ZipError
-from tripsort.export.naming import export_name, fold_key, numbered, split_extension
+from tripsort.errors import ExportError
+from tripsort.export.naming import export_name, fold_key, numbered, person_folder, split_extension
+from tripsort.faces.names import display_name
 from tripsort.index.db import transaction
-from tripsort.ingest.zip_reader import Member, ZipSource
+from tripsort.ingest.sources import ZipCache
 from tripsort.progress import NullProgress, Progress
 from tripsort.stats import count, human_bytes
 
 ALL_DIR = "all"
 UNREADABLE_DIR = "unreadable"
 DUPLICATES_DIR = "duplicates"
+PEOPLE_DIR = "people"
+SHOTS_DIR = "shots"
+SHOT_FOLDERS = ("solo", "group", "selfie")
 TMP_SUFFIX = ".tripsort-tmp"
-_MANAGED_DIRS = (ALL_DIR, UNREADABLE_DIR, DUPLICATES_DIR)
+_MANAGED_DIRS = (ALL_DIR, UNREADABLE_DIR, DUPLICATES_DIR, PEOPLE_DIR, SHOTS_DIR)
+_LINK_ROLES = frozenset({"dup_keeper", "person", "shot"})  # hardlinks into all/
 _SPACE_MARGIN = 64 * 1024 * 1024
 _COMMIT_EVERY = 50
 
@@ -72,10 +78,10 @@ class _Record:
 @dataclass
 class _Wanted:
     media: _Media
-    role: str  # 'all', 'unreadable', 'dup_keeper', 'dup_copy'
+    role: str  # 'all', 'unreadable', 'dup_keeper', 'dup_copy', 'person', 'shot'
     folder: str
     name: str
-    link_to: str | None = None  # for 'dup_keeper': the all/ file to link
+    link_to: str | None = None  # for the link roles: the all/ file to link
     relpath: str = ""
     action: str = ""  # 'write', 'unchanged', 'adopt', 'edited'
 
@@ -104,6 +110,8 @@ class ExportResult:
     left_alone: int  # files edited after an earlier export, which were not touched
     problems: list[ExportProblem]
     seconds: float
+    people_folders: int = 0
+    shots: dict[str, int] = field(default_factory=dict)  # 'solo', 'group', 'selfie' -> files
     manifest: Path | None = None
     peak_rss_bytes: int | None = None
 
@@ -117,6 +125,11 @@ class ExportResult:
             + (f"; unreadable/ holds {self.unreadable:,} for review" if self.unreadable else "")
             + ".",
         ]
+        if self.people_folders or any(self.shots.values()):
+            shots = ", ".join(f"{self.shots.get(s, 0):,} {s}" for s in SHOT_FOLDERS)
+            lines.append(
+                f"people/ holds {count(self.people_folders, 'folder')}; shots/ holds {shots}."
+            )
         if self.near_copies:
             where = (
                 "duplicates/ shows each one next to the file that was kept"
@@ -127,7 +140,10 @@ class ExportResult:
             verb_was = "was" if self.near_copies == 1 else "were"
             lines.append(f"{left_out} {verb_was} left out of all/; {where}.")
         if self.link_fallbacks:
-            lines.append("This drive does not support hardlinks, so duplicates/ holds copies.")
+            lines.append(
+                "This drive does not support hardlinks, so people/, shots/, and duplicates/ "
+                "hold copies."
+            )
         if self.left_alone:
             lines.append(
                 f"{count(self.left_alone, 'file')} changed after the last export "
@@ -182,11 +198,22 @@ def export_files(
                 planner.want(
                     _Wanted(copy, "dup_copy", folder, _name_for(copy, occurrences[copy_id]))
                 )
+    people = _load_people_folders(conn)
+    shots = _load_shot_folders(conn)
+    for m in by_date:
+        rel = all_relpath.get(m.id)
+        if rel is None:
+            continue
+        name = PurePosixPath(rel).name
+        for person in people.get(m.id, ()):
+            planner.want(_Wanted(m, "person", f"{PEOPLE_DIR}/{person}", name, rel))
+        for shot in shots.get(m.id, ()):
+            planner.want(_Wanted(m, "shot", f"{SHOTS_DIR}/{shot}", name, rel))
 
     wanted = planner.wanted
     stale = [record for relpath, record in records.items() if relpath not in planner.claimed]
     writes = [w for w in wanted if w.action == "write"]
-    needed = sum(w.media.bytes for w in writes if w.role != "dup_keeper" or not hardlinks)
+    needed = sum(w.media.bytes for w in writes if w.role not in _LINK_ROLES or not hardlinks)
     result = ExportResult(
         dry_run=dry_run,
         planned=len(wanted),
@@ -203,6 +230,11 @@ def export_files(
         left_alone=sum(1 for w in wanted if w.action == "edited"),
         problems=[],
         seconds=0.0,
+        people_folders=len({w.folder for w in wanted if w.role == "person"}),
+        shots={
+            shot: sum(1 for w in wanted if w.role == "shot" and w.folder.endswith(f"/{shot}"))
+            for shot in SHOT_FOLDERS
+        },
     )
     if dry_run:
         result.seconds = time.perf_counter() - started
@@ -226,9 +258,9 @@ def export_files(
 
     writer = _Writer(conn, project_dir, hardlinks, occurrences)
     progress.start("export", len(writes), "files")
-    extracts = [w for w in writes if w.role != "dup_keeper"]
+    extracts = [w for w in writes if w.role not in _LINK_ROLES]
     extracts.sort(key=lambda w: _source_order(occurrences[w.media.id]))
-    links = [w for w in writes if w.role == "dup_keeper"]
+    links = [w for w in writes if w.role in _LINK_ROLES]
     try:
         with ZipCache(conn) as zips:
             for w in extracts:
@@ -264,14 +296,19 @@ class _Planner:
 
     def __init__(self, project_dir: Path, records: dict[str, _Record]) -> None:
         self.project_dir = project_dir
-        self.owners = {(r.media_id, r.role): r for r in records.values()}
-        self.taken = {r.fold_key for r in records.values()}
+        # Keyed by folder too: one photo can sit in several people folders.
+        self.owners = {
+            (r.media_id, r.role, PurePosixPath(r.relpath).parent.as_posix()): r
+            for r in records.values()
+        }
+        self.by_key = {r.fold_key: r for r in records.values()}
+        self.taken = set(self.by_key)
         self.claimed: set[str] = set()
         self.wanted: list[_Wanted] = []
 
     def want(self, w: _Wanted) -> _Wanted:
-        previous = self.owners.get((w.media.id, w.role))
-        if previous is not None and PurePosixPath(previous.relpath).parent.as_posix() == w.folder:
+        previous = self.owners.get((w.media.id, w.role, w.folder))
+        if previous is not None and previous.relpath not in self.claimed:
             w.relpath = previous.relpath
             w.action = _disk_state(self.project_dir, previous)
         else:
@@ -279,6 +316,9 @@ class _Planner:
             while True:
                 relpath = f"{w.folder}/{name}"
                 key = fold_key(relpath)
+                if self._recased(key, relpath, w):
+                    w.action = "write"  # the old spelling is removed before writes start
+                    break
                 if key not in self.taken:
                     path = _abs(self.project_dir, relpath)
                     if not os.path.lexists(path):
@@ -295,56 +335,17 @@ class _Planner:
         self.wanted.append(w)
         return w
 
-
-class ZipCache:
-    """Opens each source zip at most once and checks it is still the zip that was indexed."""
-
-    def __init__(self, conn: sqlite3.Connection) -> None:
-        self.conn = conn
-        self._open: dict[int, tuple[ZipSource, dict[int, Member]] | None] = {}
-        self.missing: dict[int, str] = {}  # source id -> zip name, for messages
-
-    def member(self, source_id: int, member_index: int) -> tuple[ZipSource, Member] | None:
-        if source_id not in self._open:
-            self._open[source_id] = self._load(source_id)
-        entry = self._open[source_id]
-        if entry is None:
-            return None
-        source, members = entry
-        member = members.get(member_index)
-        return (source, member) if member is not None else None
-
-    def _load(self, source_id: int) -> tuple[ZipSource, dict[int, Member]] | None:
-        zip_path, zip_name, fingerprint = self.conn.execute(
-            "SELECT zip_path, zip_name, fingerprint FROM sources WHERE id = ?", (source_id,)
-        ).fetchone()
-        try:
-            source = ZipSource(Path(zip_path))
-        except ZipError:
-            self.missing[source_id] = str(zip_name)
-            return None
-        if source.fingerprint != fingerprint:
-            source.close()
-            self.missing[source_id] = str(zip_name)
-            return None
-        return source, {member.index: member for member in source.members}
-
-    def close(self) -> None:
-        for entry in self._open.values():
-            if entry is not None:
-                entry[0].close()
-        self._open.clear()
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        self.close()
+    def _recased(self, key: str, relpath: str, w: _Wanted) -> bool:
+        """True when ``relpath`` respells this file's earlier path (``people/sam`` renamed to
+        ``people/Sam``): the earlier one is stale, so its name can be used again."""
+        old = self.by_key.get(key)
+        return (
+            old is not None
+            and old.relpath != relpath
+            and old.relpath not in self.claimed
+            and (old.media_id, old.role) == (w.media.id, w.role)
+            and _disk_state(self.project_dir, old) != "edited"  # an edited file stays put
+        )
 
 
 @dataclass
@@ -378,6 +379,8 @@ class _Writer:
             return
         source, member = found
         target = _abs(self.project_dir, w.relpath)
+        if self._occupied(target, w):
+            return
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_name(f".{target.name}{TMP_SUFFIX}")
         digest = hashlib.sha256()
@@ -408,11 +411,13 @@ class _Writer:
             self._problem(w, f"{w.link_to} is missing, so it cannot be linked")
             return
         target = _abs(self.project_dir, w.relpath)
+        if self._occupied(target, w):
+            return
         target.parent.mkdir(parents=True, exist_ok=True)
         if self.hardlinks and self._links_work:
             try:
                 target.hardlink_to(source)
-            except FileExistsError:  # pragma: no cover - the planner picked a free name
+            except FileExistsError:  # pragma: no cover - checked just above
                 raise
             except OSError:  # exFAT, FAT32, and some network drives: copy from now on
                 self._links_work = False
@@ -427,6 +432,14 @@ class _Writer:
         _set_mtime(tmp, w.media.taken_at)
         tmp.replace(target)
         self._done(_record_for(self.project_dir, w, "copy"))
+
+    def _occupied(self, target: Path, w: _Wanted) -> bool:
+        """A file appeared where the plan expected none (or an old spelling of the path could
+        not be removed): leave it alone rather than overwrite it."""
+        if not os.path.lexists(target):
+            return False
+        self._problem(w, f"{w.relpath} already exists and was left as it is")
+        return True
 
     def _done(self, record: _Record, *, count_bytes: bool = True) -> None:
         self.written += 1
@@ -621,3 +634,24 @@ def _load_records(conn: sqlite3.Connection) -> dict[str, _Record]:
             "SELECT relpath, fold_key, media_id, role, method, bytes, mtime_ns FROM exported_files"
         )
     }
+
+
+def _load_people_folders(conn: sqlite3.Connection) -> dict[int, list[str]]:
+    """media id -> the people/ folders it belongs in (anyone whose face it shows now)."""
+    found: defaultdict[int, set[str]] = defaultdict(set)
+    for media_id, number, name in conn.execute(
+        "SELECT DISTINCT f.media_id, p.number, p.name FROM faces f "
+        "JOIN people p ON p.id = f.person_id WHERE f.match IS NOT NULL"
+    ):
+        found[int(media_id)].add(person_folder(display_name(int(number), name)))
+    return {media_id: sorted(folders) for media_id, folders in found.items()}
+
+
+def _load_shot_folders(conn: sqlite3.Connection) -> dict[int, list[str]]:
+    """media id -> its shots/ folders: solo or group, plus selfie."""
+    found: dict[int, list[str]] = {}
+    for media_id, shot, is_selfie in conn.execute(
+        "SELECT id, shot, is_selfie FROM media WHERE shot IN ('solo', 'group')"
+    ):
+        found[int(media_id)] = [str(shot), "selfie"] if is_selfie else [str(shot)]
+    return found
