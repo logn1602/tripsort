@@ -23,7 +23,7 @@ import sys
 import tempfile
 import time
 import traceback
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -49,12 +49,20 @@ from metrics import (  # the sibling module, importable once the path is set
     source_photo_merges,
     wrongly_left_out_by_family,
 )
-from people_metrics import Photo, category_counts, face_report, people_report, shot_report
+from people_metrics import (
+    Photo,
+    category_counts,
+    face_report,
+    people_report,
+    shot_report,
+    solo_face,
+)
 from PIL import Image
 
 from tripsort import __version__
 from tripsort.api import Project
 from tripsort.faces.names import display_name
+from tripsort.faces.people import RefsResult
 from tripsort.faces.types import FACE_MODEL_ID
 from tripsort.index.db import transaction
 from tripsort.ingest.decode import UnreadableImageError, decode_oriented
@@ -183,18 +191,22 @@ class Prediction:
 
     media_id: int
     sha256: str
-    people: list[str]  # names of the people whose folders it is in
+    people: list[str]  # names of the people whose folders it is in, person_NN included
     shot: str | None
     selfie: bool
     foreground: list[str | None] = field(default_factory=list)  # person of each fg face
     boxes: list[Box] = field(default_factory=list)
+    # the people in ``people`` with a real name: the labels.csv guess, since only people
+    # with a ref are labeled
+    named: list[str] = field(default_factory=list)
 
 
 def people_project(
     root: Path, work: Path, refs: Path | None, overrides: dict[str, str]
-) -> tuple[Project, list[Source]]:
+) -> tuple[Project, list[Source], dict[str, int] | None]:
     """Ingest the labeled set (once), then analyze from scratch: people from an earlier run
-    are forgotten, so every run clusters like a fresh project would."""
+    are forgotten, so every run clusters like a fresh project would. The third value counts
+    how the refs went (None without refs)."""
     sources = build_sources(root, work / "zips")
     folder = work / "project"
     folder.mkdir(parents=True, exist_ok=True)
@@ -207,11 +219,24 @@ def people_project(
         conn.execute("DELETE FROM meta WHERE key IN ('next_person_number', 'analysis_state')")
         if refs is None:
             conn.execute("DELETE FROM ref_images")
+    ref_counts = None
     if refs is not None:
-        project.people.name_from_refs(refs)  # its report names people: never printed
+        ref_counts = _ref_counts(project.people.name_from_refs(refs))
     else:
         project.analyze()
-    return project, sources
+    return project, sources, ref_counts
+
+
+def _ref_counts(result: RefsResult) -> dict[str, int]:
+    """How the refs went, in counts only: the result itself names people and files."""
+    states = Counter(result.names.values())
+    return {
+        "names": len(result.names),
+        "named": states["named"],
+        "no_match": states["no match"],
+        "no_usable_photo": states["no usable photo"],
+        "files_skipped": len(result.problems),
+    }
 
 
 def _write_overrides(folder: Path, overrides: dict[str, str]) -> None:
@@ -265,6 +290,8 @@ def predictions(
         person = display_name(int(number), name) if match is not None else None
         if person is not None and person not in prediction.people:
             prediction.people.append(person)
+            if name is not None:
+                prediction.named.append(person)
         if fg:
             prediction.foreground.append(person)
         prediction.boxes.append(Box(x, y, w, h, person or "?", bool(fg)))
@@ -282,7 +309,7 @@ def _guess_rows(files: dict[str, int], kept: dict[int, Prediction]) -> list[Row]
             file=first_file[p.media_id],
             split=split_for(p.sha256),
             checked=False,
-            people=sorted(p.people),
+            people=sorted(p.named),
             shot=p.shot or "",
             selfie=p.selfie,
             category="other" if p.shot in ("solo", "group") else "",
@@ -300,7 +327,7 @@ def prelabel(
     force: bool = False,
 ) -> dict[str, Any]:
     """Write labels.csv (unless it exists) and labels.html into the labeled set's folder."""
-    project, sources = people_project(root, work, refs, overrides or {})
+    project, sources, ref_counts = people_project(root, work, refs, overrides or {})
     with project:
         files, kept = predictions(project, sources)
         csv_path = root / LABELS_CSV
@@ -320,7 +347,7 @@ def prelabel(
                 card = Card(row.row, row.file, row.split, [], "", False, "")
                 if guess is not None:
                     card.people, card.shot, card.selfie = (
-                        sorted(guess.people),
+                        sorted(guess.named),
                         guess.shot or "",
                         guess.selfie,
                     )
@@ -336,6 +363,7 @@ def prelabel(
                 cards.append(card)
         write_page(root / LABELS_HTML, cards)
         people_found = {name for p in kept.values() for name in p.people}
+        named_found = {name for p in kept.values() for name in p.named}
     return {
         "rows": len(rows),
         "dev": sum(r.split == "dev" for r in rows),
@@ -343,8 +371,11 @@ def prelabel(
         "checked": sum(r.checked for r in rows),
         "label_problems": len(problems),
         "rows_without_photo": missing,
+        "refs": ref_counts,
         "people_found": len(people_found),
+        "named_people": len(named_found),
         "photos_with_people": sum(bool(p.people) for p in kept.values()),
+        "photos_with_named_people": sum(bool(p.named) for p in kept.values()),
         "labels_csv": state,
         "labels_html": "written",
     }
@@ -357,12 +388,16 @@ def evaluate_people(
     rows, problems = read_rows(root / LABELS_CSV)
     if problems:  # row numbers and column names only
         return {"label_problems": len(problems), "first_problems": problems[:20]}
-    project, sources = people_project(root, work, refs, overrides)
+    project, sources, ref_counts = people_project(root, work, refs, overrides)
     with project:
         files, kept = predictions(project, sources)
         settings = asdict(project.config.people)
     photos = []
     not_found = 0
+    # the labeled people are whoever is named in any checked row, of either split
+    everyone: Counter[str] = Counter(
+        key for r in rows if r.checked for key in {person_key(n) for n in r.people}
+    )
     checked = [r for r in rows if r.checked and r.split == split]
     for row in checked:
         media_id = files.get(row.file)
@@ -371,10 +406,7 @@ def evaluate_people(
             not_found += 1
             continue
         labeled = {person_key(n) for n in row.people}
-        solo_face = None
-        if len(labeled) == 1 and len(guess.foreground) == 1:
-            face = guess.foreground[0]
-            solo_face = (next(iter(labeled)), person_key(face) if face else None)
+        foreground = [person_key(f) if f else None for f in guess.foreground]
         photos.append(
             Photo(
                 labeled=labeled,
@@ -383,7 +415,7 @@ def evaluate_people(
                 predicted_shot=guess.shot,
                 selfie=row.selfie,
                 predicted_selfie=guess.selfie,
-                solo_face=solo_face,
+                solo_face=solo_face(labeled, row.shot, foreground),
                 category=row.category,
             )
         )
@@ -392,9 +424,9 @@ def evaluate_people(
         "split": split,
         "checked_rows": len(checked),
         "rows_not_found": not_found,
-        "refs": refs is not None,
+        "refs": ref_counts,
         "settings": settings,
-        "people": people_report(photos),
+        "people": people_report(photos, everyone),
         "shots": shot_report(photos),
         "faces": face_report(photos),
         "categories_labeled": category_counts(photos),

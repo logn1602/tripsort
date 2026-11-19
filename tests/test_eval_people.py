@@ -6,6 +6,7 @@ the output: the real labeled set holds friends' photos and names.
 
 import csv
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -40,9 +41,9 @@ def labeled_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def run(capsys: pytest.CaptureFixture[str], *args: str | Path) -> tuple[int, str]:
     code = run_eval_main([str(a) for a in args])
     captured = capsys.readouterr()
-    output = captured.out + captured.err
+    output = (captured.out + captured.err).casefold()
     for secret in (*SECRET_FOLDERS, *SECRET_PEOPLE, "solo0", "solo1", "pair.jpg", "person_0"):
-        assert secret not in output, secret
+        assert secret.casefold() not in output, secret
     return code, captured.out
 
 
@@ -86,6 +87,7 @@ def test_prelabel_then_score(
         "written",
         0,
     )
+    assert (report["refs"], report["named_people"]) == (None, 0)
     page = (labeled_set / "labels.html").read_text(encoding="utf-8")
     assert page.count("class='card'") == 10
     assert page.count("data:image/jpeg;base64,") == 10
@@ -94,6 +96,7 @@ def test_prelabel_then_score(
     assert [int(r["row"]) for r in rows] == list(range(1, 11))
     assert all(r["file"].startswith(SECRET_FOLDERS) for r in rows)
     assert {r["category"] for r in rows if r["shot"] in ("solo", "group")} == {"other"}
+    assert {r["people"] for r in rows} == {""}  # person_NN is never guessed: only names
 
     label_everything(labeled_set, {"0": "Zorblax", "1": "quuxine"})
     code, out = run(capsys, "prelabel", "--work", work)  # labels.csv is never overwritten
@@ -123,7 +126,21 @@ def test_refs_match_labels_by_name(
     face_photo([(0, 0.3, 0.2, 0.5)], seed=40).save(refs / "Zorblax.jpg")
     face_photo([(1, 0.3, 0.2, 0.5)], seed=41).save(refs / "quuxine.jpg")
     work = tmp_path / "work"
-    assert run(capsys, "prelabel", "--work", work, "--refs", refs)[0] == 0
+    code, out = run(capsys, "prelabel", "--work", work, "--refs", refs)
+    assert code == 0
+    report = json.loads(out)
+    assert report["refs"] == {
+        "names": 2,
+        "named": 2,
+        "no_match": 0,
+        "no_usable_photo": 0,
+        "files_skipped": 0,
+    }
+    assert report["named_people"] == 2
+    with (labeled_set / "labels.csv").open(encoding="utf-8", newline="") as fp:
+        guesses = {Path(r["file"]).stem: r["people"] for r in csv.DictReader(fp)}
+    assert (guesses["solo0_0"], guesses["solo1_0"]) == ("Zorblax", "quuxine")
+    assert (guesses["pair"], guesses["view"]) == ("Zorblax;quuxine", "")
     label_everything(labeled_set, {"0": "zorblax", "1": "Quuxine"})  # case does not matter
     baseline = tmp_path / "baseline.json"
     import eval.run_eval as run_eval
@@ -137,6 +154,35 @@ def test_refs_match_labels_by_name(
     assert result["people"]["matched_by_name"] == result["people"]["labeled_people"] > 0
     assert result["people"]["micro"] == {"precision": 1.0, "recall": 1.0}
     assert json.loads(baseline.read_text(encoding="utf-8"))["people"]["t"] == result
+
+
+def test_people_without_a_ref_are_left_unscored(
+    labeled_set: Path,
+    marker_faces: MarkerFaceAnalyzer,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    refs = tmp_path / "refs"
+    refs.mkdir()
+    face_photo([(0, 0.3, 0.2, 0.5)], seed=40).save(refs / "Zorblax.jpg")
+    work = tmp_path / "work"
+    code, out = run(capsys, "prelabel", "--work", work, "--refs", refs)
+    assert code == 0
+    assert json.loads(out)["named_people"] == 1
+    with (labeled_set / "labels.csv").open(encoding="utf-8", newline="") as fp:
+        assert {r["people"] for r in csv.DictReader(fp)} == {"Zorblax", ""}
+    label_everything(labeled_set, {"0": "Zorblax", "1": ""})  # only the person with a ref
+    results = []
+    for split in ("dev", "test"):
+        code, out = run(capsys, "people", "--work", work, "--refs", refs, "--split", split)
+        assert code == 0
+        results.append(json.loads(out))
+    for result in results:
+        assert result["people"]["labeled_people"] == 1
+        assert result["people"]["micro"]["precision"] in (1.0, None)
+        assert result["people"]["micro"]["recall"] in (1.0, None)
+    assert sum(r["people"]["other_predicted_people"] for r in results) >= 1
+    assert sum(r["faces"]["solo_faces"] for r in results) == 4  # the solo photos of Zorblax
 
 
 def test_settings_can_be_tried_without_editing_files(
@@ -217,8 +263,48 @@ def test_people_are_matched_by_name_then_by_shared_photos() -> None:
     assert (per["p1"]["precision"], per["p1"]["recall"]) == (1.0, round(2 / 3, 4))
     assert per["p3"]["recall"] == 0.0
     assert per["p3"]["precision"] is None
-    assert report["photos_with_unmatched_predicted_people"] == 1
+    assert report["other_predicted_people"] == 1  # person_04: counted, not scored
     assert report["micro"] == {"precision": 1.0, "recall": 0.6}
+
+
+def test_people_nobody_labeled_are_not_scored() -> None:
+    photos = [
+        photo({"alex"}, {"alex", "person_05"}, "group", "group"),
+        photo(set(), {"person_05"}),  # a solo photo of someone without a ref
+        photo({"alex"}, {"alex"}),
+    ]
+    report = people_metrics.people_report(photos)
+    assert (report["labeled_people"], report["other_predicted_people"]) == (1, 1)
+    assert report["micro"] == {"precision": 1.0, "recall": 1.0}
+
+
+def test_labeled_people_are_labeled_in_every_row() -> None:
+    # kim's labeled photos are all in the other split; a photo here that does not list kim
+    # is still a wrong photo in kim's folder
+    photos = [photo({"alex"}, {"alex", "kim"}, "group", "group"), photo({"alex"}, {"alex"})]
+    report = people_metrics.people_report(photos, Counter({"alex": 5, "kim": 2}))
+    per = {p["person"]: p for p in report["per_person"]}
+    assert (per["p1"]["photos"], per["p1"]["precision"], per["p1"]["recall"]) == (2, 1.0, 1.0)
+    assert (per["p2"]["photos"], per["p2"]["precision"], per["p2"]["recall"]) == (0, 0.0, None)
+    assert report["other_predicted_people"] == 0
+
+
+def test_solo_faces_come_from_solo_photos_of_labeled_people() -> None:
+    solo_face = people_metrics.solo_face
+    assert solo_face({"alex"}, "solo", ["alex"]) == ("alex", "alex")
+    assert solo_face({"alex"}, "solo", [None]) == ("alex", None)
+    assert solo_face(set(), "solo", ["person_05"]) is None  # someone nobody labeled
+    # alex and someone unlabeled with one face missed: the face found may not be alex's
+    assert solo_face({"alex"}, "group", ["person_05"]) is None
+    assert solo_face({"alex"}, "solo", ["alex", "person_05"]) is None
+
+
+def test_aliases_follow_photo_counts_past_nine_people() -> None:
+    labeled = [f"friend{i:02d}" for i in range(12)]
+    photos = [photo({name}, {name}) for i, name in enumerate(labeled) for _ in range(12 - i)]
+    per = people_metrics.people_report(photos)["per_person"]
+    assert [p["person"] for p in per] == [f"p{i}" for i in range(1, 13)]
+    assert [p["photos"] for p in per] == list(range(12, 0, -1))
 
 
 def test_wrong_photos_lower_precision() -> None:

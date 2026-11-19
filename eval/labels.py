@@ -7,9 +7,10 @@ Columns:
 * ``split``: ``dev`` (tune on it) or ``test`` (report on it once), 50/50 by the photo's
   SHA-256, so the split never depends on the order of anything;
 * ``checked``: ``y`` once the row was reviewed; only checked rows count;
-* ``people``: friends in the photo, ``;``-separated, background friends included, never
-  strangers;
-* ``shot``: ``solo``, ``group``, or ``none``;
+* ``people``: the labeled people in the photo, ``;``-separated: only the people with a ref
+  (the labeler and the friends they chose), in every row they are in, background included.
+  Everyone else is left out, and tripsort's other people go unscored;
+* ``shot``: ``solo``, ``group``, or ``none``, counting everyone in the photo;
 * ``selfie``: ``y`` or ``n``;
 * ``category``: ``scenery``, ``animals``, ``food``, ``documents``, or ``other``.
 

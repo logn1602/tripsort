@@ -288,11 +288,15 @@ uv run eval/run_eval.py people   --refs REFS --work WORK [--split dev|test] [--s
 
 `prelabel` writes `labels.csv` (one row per kept photo, filled with tripsort's guesses) and
 `labels.html` (each row's photo, face boxes, and guesses) into that folder; it never
-overwrites a `labels.csv`. Fix the wrong rows and mark the reviewed ones `checked`. `people`
-then prints per-person precision and recall, shot-type accuracy, and face-level homogeneity
-and completeness for the checked rows of one split: tune on `dev`, report `test` once. Only
-numbers are printed, with people shown as p1, p2, ...; `WORK` keeps the index between runs,
-so later runs only analyze. Delete `WORK` when done.
+overwrites a `labels.csv` without `--force`. Only the people in `REFS` are labeled
+(yourself and the friends you chose): list them in every row they are in, and leave
+everyone else out. The shot type counts everyone. Fix the wrong rows and mark the reviewed
+ones `checked`. `people` then prints, for the checked rows of one split, precision and
+recall for each labeled person, shot-type accuracy, and face-level homogeneity and
+completeness from solo photos of labeled people: tune on `dev`, report `test` once. Other
+people tripsort finds are counted but not scored. Only numbers are printed, with people
+shown as p1, p2, ...; `WORK` keeps the index between runs, so later runs only analyze.
+Delete `WORK` when done.
 
 ### Releasing
 

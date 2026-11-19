@@ -84,13 +84,17 @@ dd { margin: 0; }
 _RULES = """
 <div class="rules"><b>How to label.</b> Each card is one row of labels.csv (the <i>row</i> column).
 Fix only what is wrong, in labels.csv, then put <b>y</b> in <i>checked</i> for every row you
-reviewed (type y in the first, fill down). Only checked rows count.
+reviewed (type y in the first, then fill down to the last row you reviewed). Only checked
+rows count.
 <ul>
-<li><b>people</b>: friends in the photo, separated by <b>;</b>, including friends in the
-background. Never strangers. Orange boxes are foreground faces, blue dashed ones background;
-'?' means the face matched nobody.</li>
+<li><b>people</b>: only the people you have a ref photo for (you and the friends you chose),
+separated by <b>;</b>, in every row they are in, including the background. Leave everyone
+else out, friends without a ref too: they are not scored. The boxes are tripsort's guess for
+each face, orange in the foreground and blue dashed in the background: a name, a person_NN
+(someone tripsort could not name: ignore it, unless it is one of your people), or '?' (the
+face matched nobody).</li>
 <li><b>shot</b>: <b>solo</b> (one person is the subject), <b>group</b> (two or more), or
-<b>none</b> (no one).</li>
+<b>none</b> (no one), counting everyone, named or not.</li>
 <li><b>selfie</b>: <b>y</b> when someone in the photo took it with the front camera, else n.</li>
 <li><b>category</b>, one of: <b>scenery</b> (the view itself is the subject), <b>animals</b>,
 <b>food</b>, <b>documents</b> (screenshots, tickets, receipts, maps), or <b>other</b>. If people
