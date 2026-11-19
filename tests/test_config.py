@@ -16,6 +16,7 @@ def test_defaults() -> None:
     thresholds = load_config().thresholds
     assert thresholds.phash_max_distance == 6
     assert thresholds.phash_max_distance_both_exif == 2
+    assert thresholds.phash_max_distance_both_exif_resized == 4
     assert thresholds.copy_max_aspect_diff == pytest.approx(0.02)
 
 

@@ -13,7 +13,12 @@ from tripsort.dedupe.copies import (
     same_capture_time,
 )
 
-T = Thresholds(phash_max_distance=6, phash_max_distance_both_exif=2, copy_max_aspect_diff=0.02)
+T = Thresholds(
+    phash_max_distance=6,
+    phash_max_distance_both_exif=2,
+    phash_max_distance_both_exif_resized=4,
+    copy_max_aspect_diff=0.02,
+)
 BASE = 0x0F0F_F0F0_3C3C_A5A5
 
 
@@ -68,6 +73,13 @@ def test_threshold_without_exif(bits: int, grouped: bool) -> None:
 
 @pytest.mark.parametrize(("bits", "grouped"), [(0, True), (2, True), (3, False)])
 def test_stricter_threshold_when_both_have_matching_capture_times(bits: int, grouped: bool) -> None:
+    original = c(1, exif="2026-07-14T10:23:45", model="Pixel 7", nbytes=5000)
+    same_size = c(2, flip(bits), exif="2026-07-14T10:23:45", model="Pixel 7")  # e.g. re-saved
+    assert groups([original, same_size]) == ({1: {2}} if grouped else {})
+
+
+@pytest.mark.parametrize(("bits", "grouped"), [(2, True), (4, True), (5, False)])
+def test_resized_copies_with_exif_get_more_room(bits: int, grouped: bool) -> None:
     original = c(1, exif="2026-07-14T10:23:45", model="Pixel 7")
     saver = c(2, flip(bits), size=(2048, 1536), exif="2026-07-14T10:23:45", model="Pixel 7")
     assert groups([original, saver]) == ({1: {2}} if grouped else {})

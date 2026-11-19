@@ -5,7 +5,7 @@
       "copies_left_in_all_by_variant": {
         "heic_to_jpeg": 0.0,
         "recompress": 0.0,
-        "storage_saver": 0.0133,
+        "storage_saver": 0.0,
         "telegram": 0.0,
         "whatsapp": 0.0,
         "whatsapp_hd": 0.0
@@ -17,50 +17,50 @@
       },
       "dedupe": {
         "copies": 771,
-        "copies_left_in_all": 2,
-        "left_out": 918,
-        "precision": 0.8377,
-        "recall": 0.9974,
+        "copies_left_in_all": 0,
+        "left_out": 920,
+        "precision": 0.838,
+        "recall": 1.0,
         "wrongly_left_out": 149
       },
       "dedupe_if_source_merges_are_real_copies": {
         "copies": 771,
-        "copies_left_in_all": 2,
-        "left_out": 918,
-        "precision": 0.8377,
-        "recall": 0.9974,
+        "copies_left_in_all": 0,
+        "left_out": 920,
+        "precision": 0.838,
+        "recall": 1.0,
         "wrongly_left_out": 149
       },
       "grouping": {
         "grouped_with_another_photo_by_family": {
           "burst_exif": 0.17,
           "burst_no_exif": 1.0,
-          "burst_same_second": 0.99,
-          "burst_same_second_exposure_differs": 0.19,
+          "burst_same_second": 0.98,
+          "burst_same_second_exposure_differs": 0.16,
           "document": 0.0
         },
         "grouped_with_own_original_by_variant": {
           "heic_to_jpeg": 1.0,
           "recompress": 1.0,
-          "storage_saver": 0.9867,
-          "telegram": 0.98,
-          "whatsapp": 0.9933,
+          "storage_saver": 1.0,
+          "telegram": 0.9733,
+          "whatsapp": 0.9867,
           "whatsapp_hd": 1.0
         },
         "pairwise": {
-          "f1": 0.9258,
-          "precision": 0.8712,
-          "recall": 0.9878
+          "f1": 0.9237,
+          "precision": 0.8665,
+          "recall": 0.9891
         }
       },
-      "ingest_and_analyze_seconds": 37.1,
+      "ingest_and_analyze_seconds": 36.7,
       "items": 1351,
       "keeper_accuracy": 1.0,
       "negative_pair_distance_histogram": {
         "burst_exif": {
-          "0": 31,
+          "0": 32,
           "2": 17,
-          "4": 2
+          "4": 1
         },
         "burst_no_exif": {
           "0": 34,
@@ -68,20 +68,19 @@
           "4": 1
         },
         "burst_same_second": {
-          "0": 33,
-          "2": 16,
+          "0": 35,
+          "2": 14,
           "4": 1
         },
         "burst_same_second_exposure_differs": {
-          "0": 34,
-          "2": 15,
-          "4": 1
+          "0": 41,
+          "2": 7,
+          "4": 2
         },
         "document": {
-          "10": 4,
-          "12": 1,
-          "8": 4,
-          ">12": 6
+          "10": 3,
+          "8": 1,
+          ">12": 11
         }
       },
       "negatives": 430,
@@ -91,7 +90,8 @@
       "thresholds": {
         "copy_max_aspect_diff": 0.02,
         "phash_max_distance": 6,
-        "phash_max_distance_both_exif": 2
+        "phash_max_distance_both_exif": 2,
+        "phash_max_distance_both_exif_resized": 4
       },
       "tripsort_version": "0.1.0a1",
       "unique_files": 1351,

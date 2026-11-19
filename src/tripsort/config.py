@@ -20,6 +20,7 @@ PROJECT_CONFIG_NAME = "tripsort.toml"
 _RANGES: dict[str, tuple[float, float]] = {
     "phash_max_distance": (0, 64),
     "phash_max_distance_both_exif": (0, 64),
+    "phash_max_distance_both_exif_resized": (0, 64),
     "copy_max_aspect_diff": (0.0, 1.0),
 }
 
@@ -30,6 +31,7 @@ class Thresholds:
 
     phash_max_distance: int
     phash_max_distance_both_exif: int
+    phash_max_distance_both_exif_resized: int
     copy_max_aspect_diff: float
 
 
@@ -99,6 +101,9 @@ def _build(data: dict[str, Any], where: str) -> Config:
             thresholds=Thresholds(
                 phash_max_distance=int(thresholds["phash_max_distance"]),
                 phash_max_distance_both_exif=int(thresholds["phash_max_distance_both_exif"]),
+                phash_max_distance_both_exif_resized=int(
+                    thresholds["phash_max_distance_both_exif_resized"]
+                ),
                 copy_max_aspect_diff=float(thresholds["copy_max_aspect_diff"]),
             )
         )

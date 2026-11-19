@@ -61,6 +61,7 @@ def test_schema(project: Project, trip: dict[str, Path]) -> None:
     assert manifest["thresholds"] == {
         "phash_max_distance": 6,
         "phash_max_distance_both_exif": 2,
+        "phash_max_distance_both_exif_resized": 4,
         "copy_max_aspect_diff": 0.02,
     }
     for entry in manifest["files"]:

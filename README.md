@@ -85,7 +85,8 @@ The methods return plain dataclasses, and the CLI only formats them.
   from an iPhone HEIC. tripsort compares 64-bit perceptual hashes (pHash) and aspect
   ratios. Burst shots of one moment can look just as close, so EXIF decides:
   - when both files record a capture time, the times must match (to the sub-second when
-    both record it) and the pHash distance must be 2 or less;
+    both record it) and the pHash distance must be 2 or less, or 4 or less when the two
+    files have different pixel sizes (burst shots never do);
   - otherwise the distance must be 6 or less;
   - files from different camera models, files whose EXIF exposure time or ISO differ (each
     counts only when both files record it, so a copy that kept its EXIF is never split
@@ -137,9 +138,10 @@ Thresholds live in the packaged defaults and can be overridden per project in
 
 ```toml
 [thresholds]
-phash_max_distance = 6             # when at least one of the two files has no EXIF capture time
-phash_max_distance_both_exif = 2   # when both have EXIF capture times, which must also match
-copy_max_aspect_diff = 0.02        # largest relative difference in width / height
+phash_max_distance = 6                   # at least one of the two files has no EXIF capture time
+phash_max_distance_both_exif = 2         # both have EXIF capture times (which must match), same size
+phash_max_distance_both_exif_resized = 4 # the same, but the pixel sizes differ (bursts never do)
+copy_max_aspect_diff = 0.02             # largest relative difference in width / height
 ```
 
 Changing a threshold needs no re-reading of the zips: `tripsort analyze` and

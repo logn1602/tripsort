@@ -4,7 +4,9 @@ Two images are copies when their 64-bit pHashes are close and their aspect ratio
 Burst shots of one moment are often just as close, so EXIF decides:
 
 * Both files have EXIF capture times: the times must match (to the sub-second when both
-  record it) and the distance must be at most ``phash_max_distance_both_exif``.
+  record it) and the distance must be at most ``phash_max_distance_both_exif``, or
+  ``phash_max_distance_both_exif_resized`` when the pixel sizes differ (burst shots are always
+  the same size, while a copy that kept its EXIF is often scaled down).
 * Otherwise the distance must be at most ``phash_max_distance``.
 * Two files that name different camera models, or record different exposure times or ISO
   values, are never copies. Each field counts only when both files record it: a true copy
@@ -109,7 +111,9 @@ def cannot_link(a: CopyCandidate, b: CopyCandidate) -> bool:
 
 def pair_limit(a: CopyCandidate, b: CopyCandidate, thresholds: Thresholds) -> int:
     if a.exif_datetime and b.exif_datetime:
-        return thresholds.phash_max_distance_both_exif
+        if (a.width, a.height) == (b.width, b.height):
+            return thresholds.phash_max_distance_both_exif
+        return thresholds.phash_max_distance_both_exif_resized
     return thresholds.phash_max_distance
 
 
@@ -121,7 +125,11 @@ def find_copy_groups(candidates: list[CopyCandidate], thresholds: Thresholds) ->
         return []
     hashes = np.array([c.phash for c in ordered], dtype=np.uint64)
     aspect = np.array([c.width / c.height for c in ordered], dtype=np.float64)
-    max_any = max(thresholds.phash_max_distance, thresholds.phash_max_distance_both_exif)
+    max_any = max(
+        thresholds.phash_max_distance,
+        thresholds.phash_max_distance_both_exif,
+        thresholds.phash_max_distance_both_exif_resized,
+    )
 
     # For each file j, the higher-priority files i < j within the widest threshold.
     neighbors: defaultdict[int, list[tuple[int, int]]] = defaultdict(list)
