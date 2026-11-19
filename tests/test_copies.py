@@ -39,6 +39,7 @@ def c(
     fmt: str = "JPEG",
     exposure: float | None = None,
     iso: int | None = None,
+    modified: str | None = None,
 ) -> CopyCandidate:
     return CopyCandidate(
         media_id=media_id,
@@ -53,6 +54,7 @@ def c(
         format=fmt,
         exposure_time=exposure,
         iso=iso,
+        exif_modified=modified,
     )
 
 
@@ -120,6 +122,23 @@ def test_keeper_rule() -> None:
     larger_file = c(4, size=(4000, 3000), nbytes=5000)
     assert groups([big_no_exif, larger_file]) == {4: {2}}  # then the larger file
     assert keeper_order(c(5)) < keeper_order(c(6))  # then SHA-256, for determinism
+
+
+def test_keeper_prefers_an_unedited_file_to_a_larger_one() -> None:
+    """A camera writes the capture time as the modify date; an editor writes the save time."""
+    taken = "2026-07-14T10:23:45.120"  # cameras often record sub-seconds for the capture only
+    original = c(1, exif=taken, modified="2026-07-14T10:23:45", nbytes=2_000_000)
+    edited = c(2, flip(1), exif=taken, modified="2026-11-02T18:05:12", nbytes=2_600_000)
+    no_modify_date = c(3, flip(1), exif=taken, nbytes=2_700_000)
+    assert original.unedited
+    assert not edited.unedited
+    assert not no_modify_date.unedited
+    assert not c(4, modified="2026-07-14T10:23:45").unedited  # no capture time to compare with
+    assert groups([edited, original]) == {1: {2}}  # the smaller file, since it is unedited
+    assert groups([no_modify_date, original]) == {1: {3}}
+    assert groups([edited, no_modify_date]) == {3: {2}}  # neither: the larger file wins
+    bigger = c(5, flip(1), size=(4032, 3024), exif=taken, modified="2026-11-02T18:05:12")
+    assert groups([original, bigger]) == {5: {1}}  # more pixels still come first
 
 
 def test_a_copy_cannot_chain_two_burst_shots() -> None:

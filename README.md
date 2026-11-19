@@ -93,8 +93,11 @@ The methods return plain dataclasses, and the CLI only formats them.
     off), and same-size PNGs (screenshots of one app's layout, such as boarding passes) are
     never treated as copies.
 - **The keeper** of a group of copies is the version with the most pixels, then the one with
-  EXIF, then the largest file. When a HEIC original and a same-size JPEG conversion are both
-  present, that usually picks the JPEG, which opens everywhere.
+  EXIF, then the one whose EXIF modify date equals its capture time (a camera writes it that
+  way, while an editor that re-saves the photo writes the time of the save), then the largest
+  file. When a HEIC original and a same-size JPEG conversion are both present, that usually
+  picks the JPEG, which is the larger file and opens everywhere, unless the converter wrote a
+  new modify date.
 
 The copies are left out of `all/` but never deleted; `--export-duplicates` shows each one
 next to the file that was kept. Two limits to know about: two messenger copies of different

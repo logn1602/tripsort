@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from factories import camera_exif, jpeg, make_zip, photo
 
 import tripsort
 from tripsort.api import Project, clean
@@ -60,6 +61,21 @@ def test_analyze_summary(project: Project, trip: dict[str, Path]) -> None:
     assert "1 file (videos, very large images) checked for exact duplicates only." in summary
     assert "1 file could not be decoded" in summary
     assert result.dates == {"exif": 4, "filename": 2, "zip_mtime": 1}  # the video is named by date
+
+
+def test_an_unedited_original_is_kept_over_a_larger_edited_save(
+    project: Project, tmp_path: Path
+) -> None:
+    original = jpeg(photo(1), quality=80, exif=camera_exif())
+    edited = jpeg(photo(1), quality=95, exif=camera_exif(modified="2026:11:02 18:05:12"))
+    assert len(edited) > len(original)
+    project.ingest([make_zip(tmp_path / "trip.zip", [("a.jpg", edited), ("b.jpg", original)])])
+    assert project.analyze().stats.near_copies == 1
+    keepers = project.connection.execute(
+        "SELECT o.member_path FROM group_members g JOIN occurrences o ON o.media_id = g.media_id "
+        "WHERE g.is_keeper = 1"
+    )
+    assert [row[0] for row in keepers] == ["b.jpg"]
 
 
 def test_runs_are_recorded_with_peak_memory(project: Project, trip: dict[str, Path]) -> None:

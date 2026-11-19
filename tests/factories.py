@@ -29,6 +29,7 @@ def exif_block(
     subsec: str | None = None,
     offset: str | None = None,
     digitized: str | None = None,
+    modified: str | None = None,
     make: str | None = None,
     model: str | None = None,
     lens: str | None = None,
@@ -44,6 +45,8 @@ def exif_block(
         exif[ExifTags.Base.Model] = model
     if orientation is not None:
         exif[ExifTags.Base.Orientation] = orientation
+    if modified is not None:
+        exif[ExifTags.Base.DateTime] = modified
     ifd = exif.get_ifd(ExifTags.IFD.Exif)
     if datetime is not None:
         ifd[ExifTags.Base.DateTimeOriginal] = datetime
@@ -77,11 +80,12 @@ def _dms(value: float) -> tuple[float, float, float]:
 
 
 def camera_exif(datetime: str = "2026:07:14 10:23:45", **extra: object) -> bytes:
-    """EXIF the way a phone camera writes it."""
+    """EXIF the way a phone camera writes it, with the capture time as the modify date."""
     values: dict[str, object] = {
         "make": "Google",
         "model": "Pixel 7",
         "datetime": datetime,
+        "modified": datetime,
         "exposure": (1, 120),
         "iso": 100,
     }

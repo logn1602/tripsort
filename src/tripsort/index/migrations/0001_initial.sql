@@ -34,6 +34,7 @@ CREATE TABLE media (
   duration_s      REAL,              -- videos, once video analysis exists
   exif_datetime   TEXT,              -- EXIF capture time, ISO 8601, sub-seconds kept, no zone
   exif_offset     TEXT,              -- OffsetTimeOriginal, e.g. +02:00
+  exif_modified   TEXT,              -- EXIF modify date (DateTime), to the second; editors change it
   has_exif        INTEGER NOT NULL DEFAULT 0,  -- capture time or camera make/model present
   camera_make     TEXT,
   camera_model    TEXT,

@@ -15,9 +15,9 @@ Burst shots of one moment are often just as close, so EXIF decides:
   and screenshots of one app's layout (tickets, boarding passes) can be as close as copies.
 
 Groups are stars, not connected components. Files are taken in keeper order (most pixels,
-then has EXIF, then largest file, then SHA-256), and each one joins the closest compatible
-keeper or becomes a keeper itself. A copy that resembles two burst shots therefore cannot
-chain them into one group.
+then has EXIF, then an EXIF modify date equal to the capture time, then largest file, then
+SHA-256), and each one joins the closest compatible keeper or becomes a keeper itself. A copy
+that resembles two burst shots therefore cannot chain them into one group.
 """
 
 import math
@@ -48,10 +48,24 @@ class CopyCandidate:
     format: str | None = None
     exposure_time: float | None = None
     iso: int | None = None
+    exif_modified: str | None = None
 
     @property
     def pixels(self) -> int:
         return self.width * self.height
+
+    @property
+    def unedited(self) -> bool:
+        """The EXIF modify date equals the capture time, the way a camera writes it.
+
+        An editor that re-saves a photo writes the time of the save instead. Compared to the
+        second, since cameras often record sub-seconds for the capture time only.
+        """
+        return bool(
+            self.exif_datetime
+            and self.exif_modified
+            and self.exif_datetime[:19] == self.exif_modified[:19]
+        )
 
 
 @dataclass(frozen=True)
@@ -67,9 +81,19 @@ class CopyStats:
     bytes_saved: int  # size of the copies left out of all/ (one occurrence each)
 
 
-def keeper_order(candidate: CopyCandidate) -> tuple[int, int, int, str]:
-    """Most pixels, then has EXIF, then largest file; SHA-256 breaks ties."""
-    return (-candidate.pixels, -int(candidate.has_exif), -candidate.bytes, candidate.sha256)
+def keeper_order(candidate: CopyCandidate) -> tuple[int, int, int, int, str]:
+    """Most pixels, then has EXIF, then unedited, then largest file; SHA-256 breaks ties.
+
+    Unedited comes before size because a re-save of an already compressed photo can be larger
+    than the photo itself.
+    """
+    return (
+        -candidate.pixels,
+        -int(candidate.has_exif),
+        -int(candidate.unedited),
+        -candidate.bytes,
+        candidate.sha256,
+    )
 
 
 def same_capture_time(a: str, b: str) -> bool:
@@ -183,7 +207,7 @@ def find_copy_groups(candidates: list[CopyCandidate], thresholds: Thresholds) ->
 def load_candidates(conn: sqlite3.Connection) -> list[CopyCandidate]:
     rows = conn.execute(
         "SELECT id, sha256, phash, width, height, has_exif, bytes, exif_datetime, camera_model, "
-        "format, exposure_time, iso FROM media "
+        "format, exposure_time, iso, exif_modified FROM media "
         "WHERE status = 'ok' AND kind = 'image' AND phash IS NOT NULL "
         "AND width > 0 AND height > 0"
     ).fetchall()
@@ -201,6 +225,7 @@ def load_candidates(conn: sqlite3.Connection) -> list[CopyCandidate]:
             format=row[9],
             exposure_time=row[10],
             iso=row[11],
+            exif_modified=row[12],
         )
         for row in rows
     ]

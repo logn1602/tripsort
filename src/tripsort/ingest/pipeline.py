@@ -291,6 +291,7 @@ def _insert_media(run: _Run, report: SourceReport, member: Member, hashed: Hashe
                 height=analysis.height,
                 exif_datetime=exif.datetime,
                 exif_offset=exif.offset,
+                exif_modified=exif.modified,
                 has_exif=int(exif.has_camera_exif),
                 camera_make=exif.make,
                 camera_model=exif.model,

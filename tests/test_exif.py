@@ -65,6 +65,18 @@ def test_digitized_time_is_the_fallback() -> None:
     assert info.datetime == "2026-07-14T08:00:00"
 
 
+def test_modify_date_is_read_to_the_second() -> None:
+    taken = "2026:07:14 10:23:45"
+    camera = exif_block(datetime=taken, subsec="120", modified=taken)
+    info = exif_of(jpeg(photo(1, (64, 48)), exif=camera))
+    assert (info.datetime, info.modified) == ("2026-07-14T10:23:45.120", "2026-07-14T10:23:45")
+    no_modify_date = exif_block(datetime="2026:07:14 10:23:45")
+    assert exif_of(jpeg(photo(1, (64, 48)), exif=no_modify_date)).modified is None
+    editor_only = exif_of(jpeg(photo(1, (64, 48)), exif=exif_block(modified="2026:11:02 18:05:12")))
+    assert editor_only.modified == "2026-11-02T18:05:12"
+    assert not editor_only.has_camera_exif  # a modify date alone is not camera EXIF
+
+
 def test_orientation_alone_is_not_camera_exif() -> None:
     info = exif_of(jpeg(photo(1, (64, 48)), exif=exif_block(orientation=1)))
     assert not info.has_camera_exif

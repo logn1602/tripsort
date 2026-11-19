@@ -19,6 +19,7 @@ _ROTATED = frozenset({5, 6, 7, 8})
 class ExifInfo:
     datetime: str | None = None  # 'YYYY-MM-DDTHH:MM:SS' plus '.fff' when sub-seconds exist
     offset: str | None = None  # '+HH:MM'
+    modified: str | None = None  # the modify date (IFD0 DateTime), 'YYYY-MM-DDTHH:MM:SS'
     make: str | None = None
     model: str | None = None
     lens: str | None = None
@@ -69,6 +70,7 @@ def _read(exif: Image.Exif) -> ExifInfo:
     return ExifInfo(
         datetime=stamp,
         offset=offset,
+        modified=parse_exif_datetime(exif.get(ExifTags.Base.DateTime)),
         make=_text(exif.get(ExifTags.Base.Make)),
         model=_text(exif.get(ExifTags.Base.Model)),
         lens=_text(ifd.get(ExifTags.Base.LensModel)),

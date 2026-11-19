@@ -52,6 +52,7 @@ def test_media_rows(project: Project, trip: dict[str, Path]) -> None:
     assert rotated["has_exif"] == 1
     assert rotated["camera_model"] == "Pixel 7"
     assert rotated["exif_datetime"] == "2026-07-14T11:00:00"
+    assert rotated["exif_modified"] == "2026-07-14T11:00:00"
     assert (rotated["exposure_time"], rotated["iso"]) == (pytest.approx(1 / 120), 100)
     heic = rows["DCIM/IMG_0001.HEIC"]
     assert (heic["format"], heic["camera_model"]) == ("HEIF", "iPhone 15")
