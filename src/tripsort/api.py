@@ -4,8 +4,11 @@ from tripsort import Project
 
 with Project.open("sorted/") as proj:          # creates sorted/.tripsort/index.db
     proj.ingest(["mine.zip", "sam.zip"])       # stage 1: decode each new file once
-    proj.analyze()                             # dates and dedupe: queries only
-    result = proj.export(hardlinks=True)       # all/ + manifest.json
+    proj.people.name_from_refs("refs/")        # refs/<name>.jpg
+    proj.analyze()                             # dates, dedupe, people: queries only
+    proj.people.rename("person_03", "alex")
+    proj.people.merge("person_07", into="alex")
+    result = proj.export(hardlinks=True)       # all/, people/, shots/, manifest.json
     print(result.summary())
 """
 
@@ -26,10 +29,22 @@ from tripsort import __version__
 from tripsort._bench import peak_rss_bytes
 from tripsort.config import Config, load_config
 from tripsort.dedupe.copies import rebuild_copy_groups
-from tripsort.errors import UserError
+from tripsort.errors import ModelError, UserError, ZipError
 from tripsort.export.manifest import write_manifest
 from tripsort.export.writer import ExportResult, export_files
-from tripsort.index.db import INDEX_DIR_NAME, get_meta, index_path, open_index, set_meta
+from tripsort.faces.analysis import PeopleStats
+from tripsort.faces.people import People, PersonInfo, RefsResult
+from tripsort.faces.review import REVIEW_DIR
+from tripsort.faces.store import pending_scans
+from tripsort.faces.types import FACE_MODEL_ID, FaceAnalyzer
+from tripsort.index.db import (
+    INDEX_DIR_NAME,
+    get_meta,
+    index_path,
+    open_index,
+    set_meta,
+    transaction,
+)
 from tripsort.ingest.dates import resolve_dates
 from tripsort.ingest.pipeline import IngestResult, ingest_zips
 from tripsort.progress import Progress
@@ -39,16 +54,23 @@ __all__ = [
     "AnalyzeResult",
     "ExportResult",
     "IngestResult",
+    "People",
+    "PeopleStats",
+    "PersonInfo",
     "Project",
     "ProjectStats",
+    "RefsResult",
     "clean",
 ]
+
+PEOPLE_EDITS_KEY = "people_edits"  # bumped by rename and merge, so the next export re-analyzes
 
 
 @dataclass
 class AnalyzeResult:
     stats: ProjectStats
     dates: dict[str, int] = field(default_factory=dict)  # how many dates came from each source
+    people: PeopleStats = field(default_factory=PeopleStats)
     seconds: float = 0.0
     peak_rss_bytes: int | None = None
 
@@ -79,7 +101,37 @@ class AnalyzeResult:
                 f"{count(s.read_failures, 'zip entry', 'zip entries')} could not be read "
                 "(see the messages above and manifest.json)."
             )
+        lines.extend(_people_lines(self.people))
         return "\n".join(lines)
+
+
+def _people_lines(p: PeopleStats) -> list[str]:
+    lines = []
+    if p.people or p.foreground_faces:
+        named = f" ({p.named:,} named)" if p.named else ""
+        lines.append(
+            f"Found {count(p.people, 'person', 'people')}{named} in "
+            f"{count(p.photos_with_people, 'photo')}: {p.shots.get('solo', 0):,} solo, "
+            f"{p.shots.get('group', 0):,} group, {count(p.shots.get('selfie', 0), 'selfie')}."
+        )
+    if p.unassigned:
+        lines.append(
+            f"{count(p.unassigned, 'foreground face')} matched nobody: strangers, or someone "
+            "to merge (see `tripsort people review`)."
+        )
+    for group in p.joined:
+        lines.append(
+            f"The clustering put {' and '.join(group)} together; they were kept apart as you "
+            "named them, but check `tripsort people review`."
+        )
+    if p.refs_unmatched:
+        lines.append(f"No one looks enough like the refs/ photos of {', '.join(p.refs_unmatched)}.")
+    if p.not_scanned:
+        lines.append(
+            f"{count(p.not_scanned, 'photo')} not scanned for faces yet; "
+            "`tripsort ingest` on this project scans them."
+        )
+    return lines
 
 
 class Project:
@@ -89,6 +141,8 @@ class Project:
         self.folder = folder
         self.config = config
         self._conn = conn
+        self._faces: FaceAnalyzer | None = None
+        self.people = People(self)
 
     @classmethod
     def open(cls, folder: str | os.PathLike[str]) -> Self:
@@ -105,26 +159,63 @@ class Project:
         """The index connection, for read-only queries (tests, evaluation)."""
         return self._conn
 
+    def face_analyzer(self, progress: Progress | None = None) -> FaceAnalyzer:
+        """The face analyzer, loaded once per project; the models download on first use.
+
+        Raises ``ModelError`` when the models cannot be downloaded.
+        """
+        if self._faces is None:
+            from tripsort.faces import analyzer  # OpenCV loads only when faces are needed
+
+            self._faces = analyzer.load_face_analyzer(progress)
+        return self._faces
+
     def ingest(
-        self, zips: Iterable[str | os.PathLike[str]], *, progress: Progress | None = None
+        self, zips: Iterable[str | os.PathLike[str]] = (), *, progress: Progress | None = None
     ) -> IngestResult:
-        """Stage 1: read the zips and decode every file not seen before."""
+        """Stage 1: read the zips and decode every file not seen before, finding faces in
+        the same pass. Photos indexed earlier without a face scan are scanned too, so
+        ``ingest()`` with no zips only catches up on faces."""
+        paths = [Path(z) for z in zips]
+        for path in paths:  # before the models load (or download) for nothing
+            if not path.is_file():
+                raise ZipError(f"{path.resolve()}: no such file")
+        problem: list[str] = []
+
+        def load_faces() -> FaceAnalyzer | None:
+            try:
+                return self.face_analyzer(progress)
+            except ModelError as exc:
+                problem.append(str(exc))
+                return None
+
         with self._run("ingest") as run:
-            result = ingest_zips(self._conn, [Path(z) for z in zips], progress=progress)
+            result = ingest_zips(self._conn, paths, progress=progress, faces=load_faces)
+            result.face_problem = problem[0] if problem else None
+            result.faces_pending = pending_scans(
+                self._conn, self._faces.model_id if self._faces else FACE_MODEL_ID
+            )
             run.items, run.bytes = result.files_read, result.bytes_read
         result.peak_rss_bytes = run.peak_rss_bytes
         return result
 
     def analyze(self) -> AnalyzeResult:
-        """Resolve dates and find copies. Reads the index only, never the zips."""
+        """Resolve dates, find copies, and sort faces into people and shot types. Reads the
+        index only, never the zips."""
+        from tripsort.faces.analysis import analyze_people  # pulls in scikit-learn
+
         with self._run("analyze") as run:
             started = time.perf_counter()
             dates = resolve_dates(self._conn)
             rebuild_copy_groups(self._conn, self.config.thresholds)
+            with transaction(self._conn):
+                people = analyze_people(self._conn, self.config.people)
             set_meta(self._conn, "analysis_state", self._analysis_state())
             stats = project_stats(self._conn)
             run.items = stats.unique
-        return AnalyzeResult(stats, dates, time.perf_counter() - started, run.peak_rss_bytes)
+        return AnalyzeResult(
+            stats, dates, people, time.perf_counter() - started, run.peak_rss_bytes
+        )
 
     def export(
         self,
@@ -180,9 +271,19 @@ class Project:
     def _analysis_state(self) -> str:
         counts = self._conn.execute(
             "SELECT (SELECT COUNT(*) FROM media), (SELECT COALESCE(MAX(id), 0) FROM media), "
-            "(SELECT COUNT(*) FROM occurrences), (SELECT COUNT(*) FROM sources)"
+            "(SELECT COUNT(*) FROM occurrences), (SELECT COUNT(*) FROM sources), "
+            "(SELECT COUNT(*) FROM face_scans), (SELECT COALESCE(MAX(id), 0) FROM faces), "
+            "(SELECT COALESCE(GROUP_CONCAT(relpath || ':' || sha256, '|'), '') "
+            " FROM (SELECT relpath, sha256 FROM ref_images ORDER BY relpath))"
         ).fetchone()
-        return json.dumps({"config": self.config.hash, "counts": list(counts)})
+        edits = get_meta(self._conn, PEOPLE_EDITS_KEY) or "0"
+        return json.dumps({"config": self.config.hash, "counts": list(counts), "edits": edits})
+
+    def _people_edited(self) -> None:
+        """Called after a rename or merge: the next export analyzes again (index only), so
+        background faces and names follow the edit."""
+        edits = int(get_meta(self._conn, PEOPLE_EDITS_KEY) or "0")
+        set_meta(self._conn, PEOPLE_EDITS_KEY, str(edits + 1))
 
     @contextmanager
     def _run(self, stage: str) -> Iterator["_RunRecord"]:
@@ -220,12 +321,16 @@ def _now() -> str:
 
 
 def clean(folder: str | os.PathLike[str]) -> bool:
-    """Delete the project's index (``.tripsort/``). Exported folders are kept.
+    """Delete the project's index (``.tripsort/``: hashes, faces, embeddings, names) and the
+    review pages (``review/``, which show face crops). Exported folders are kept.
 
-    Returns False when there was no index to delete.
+    Returns False when there was nothing to delete.
     """
-    target = Path(folder).expanduser().resolve() / INDEX_DIR_NAME
-    if not target.exists():
-        return False
-    shutil.rmtree(target)
-    return True
+    project = Path(folder).expanduser().resolve()
+    deleted = False
+    for name in (INDEX_DIR_NAME, REVIEW_DIR):
+        target = project / name
+        if target.exists():
+            shutil.rmtree(target)
+            deleted = True
+    return deleted

@@ -6,11 +6,13 @@
 
 Uses only the standard library (the PNGs are written with zlib), so it runs where tripsort
 was installed from a wheel and nothing else. It catches packaging mistakes, such as a
-migration or config file missing from the wheel, that the test suite cannot see.
+migration or config file missing from the wheel, that the test suite cannot see. It also
+checks every photo was scanned for faces, so the face models must download (or already be
+in the model cache) and pass their SHA-256 check.
 
-    uv run --with dist/tripsort-0.1.0a1-py3-none-any.whl tools/smoke_test.py   # a built wheel
+    uv run --with dist/tripsort-0.1.0a2-py3-none-any.whl tools/smoke_test.py   # a built wheel
     uv run python tools/smoke_test.py                                       # the dev install
-    uv run tools/smoke_test.py uvx --from tripsort==0.1.0a1 tripsort         # any command
+    uv run tools/smoke_test.py uvx --from tripsort==0.1.0a2 tripsort         # any command
 
 With no command, it runs ``python -m tripsort`` with this interpreter.
 """
@@ -86,6 +88,8 @@ def run_smoke(tripsort: list[str], workdir: Path, env: dict[str, str] | None = N
     summary = manifest["summary"]
     assert (summary["unique"], summary["exact_duplicates"]) == (3, 1), summary
     assert summary["skipped"] == {"junk": 1, "unsupported_type": 1}, summary
+    assert summary["faces_not_scanned"] == 0, summary  # the face models loaded
+    assert summary["shots"]["none"] == 3, summary  # no faces in these PNGs
 
     second = run("run", str(zip_path), "-o", str(out))
     assert second.returncode == 0, second.stderr

@@ -3,8 +3,50 @@ from pathlib import Path
 
 import pytest
 from factories import camera_exif, heic, jpeg, make_zip, photo, whatsapp_copy
+from fake_faces import MarkerFaceAnalyzer, NullFaceAnalyzer
 
+import tripsort.faces.analyzer
 from tripsort.api import Project
+from tripsort.models.download import model_status
+from tripsort.models.registry import FACE_MODELS
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Tests marked `models` run only when the real face models are cached."""
+    if not any("models" in item.keywords for item in items):
+        return
+    if all(model_status(m) == "ok" for m in FACE_MODELS):
+        return
+    skip = pytest.mark.skip(reason="face models not downloaded: `uv run tripsort models download`")
+    for item in items:
+        if "models" in item.keywords:
+            item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_models(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Outside `models` tests, the face models are never loaded and nothing is downloaded:
+    the model folder is empty, and the analyzer finds no faces."""
+    if request.node.get_closest_marker("models"):
+        return
+    monkeypatch.setenv("TRIPSORT_MODEL_DIR", str(tmp_path_factory.mktemp("no-models")))
+    monkeypatch.setattr(
+        tripsort.faces.analyzer, "load_face_analyzer", lambda progress=None: NullFaceAnalyzer()
+    )
+
+
+@pytest.fixture
+def marker_faces(monkeypatch: pytest.MonkeyPatch) -> MarkerFaceAnalyzer:
+    """Faces from colored squares (see fake_faces.face_photo) instead of the real models."""
+    analyzer = MarkerFaceAnalyzer()
+    monkeypatch.setattr(
+        tripsort.faces.analyzer, "load_face_analyzer", lambda progress=None: analyzer
+    )
+    return analyzer
 
 
 @pytest.fixture

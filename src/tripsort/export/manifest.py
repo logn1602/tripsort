@@ -1,7 +1,8 @@
 """``manifest.json``: every file, where it came from, and what tripsort decided about it.
 
-It holds no absolute paths (zips appear by file name only), no GPS, and no timestamps, so
-an export with the same inputs and config writes the same bytes every time.
+It holds no absolute paths (zips appear by file name only), no GPS, no timestamps, and no
+face boxes or embeddings, so an export with the same inputs and config writes the same bytes
+every time. It does name the people in each photo, as the people/ folders do.
 """
 
 import json
@@ -14,6 +15,10 @@ from typing import Any
 from tripsort import __version__
 from tripsort.config import Config
 from tripsort.export.writer import TMP_SUFFIX
+from tripsort.faces.names import display_name
+from tripsort.faces.people import person_infos
+from tripsort.faces.store import pending_scans
+from tripsort.faces.types import FACE_MODEL_ID
 from tripsort.ingest.hashing import PHASH_ALGORITHM
 from tripsort.ingest.zip_reader import SKIP_JUNK, skip_hint
 from tripsort.stats import ProjectStats
@@ -52,11 +57,30 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
             }
         )
 
+    people_in: defaultdict[int, list[str]] = defaultdict(list)
+    for media_id, number, name in conn.execute(
+        "SELECT DISTINCT f.media_id, p.number, p.name FROM faces f "
+        "JOIN people p ON p.id = f.person_id WHERE f.match IS NOT NULL"
+    ):
+        people_in[int(media_id)].append(display_name(int(number), name))
+    face_counts = {
+        int(media_id): {"foreground": int(fg), "background": int(bg)}
+        for media_id, fg, bg in conn.execute(
+            "SELECT s.media_id, "
+            "  (SELECT COUNT(*) FROM faces f WHERE f.media_id = s.media_id "
+            "   AND f.model_id = s.model_id AND f.is_foreground = 1), "
+            "  (SELECT COUNT(*) FROM faces f WHERE f.media_id = s.media_id "
+            "   AND f.model_id = s.model_id AND f.is_foreground = 0 AND f.score >= ?) "
+            "FROM face_scans s WHERE s.model_id = ? AND s.status = 'ok'",
+            (config.people.min_face_score, FACE_MODEL_ID),
+        )
+    }
+
     files = []
     for row in conn.execute(
         "SELECT id, sha256, kind, format, bytes, width, height, taken_at, tz_offset, "
-        "taken_at_source, camera_make, camera_model, lens_model, phash, status, note "
-        "FROM media ORDER BY COALESCE(taken_at, ''), sha256"
+        "taken_at_source, camera_make, camera_model, lens_model, phash, status, note, "
+        "shot, is_selfie FROM media ORDER BY COALESCE(taken_at, ''), sha256"
     ):
         media_id = int(row["id"])
         if media_id not in occurrences:
@@ -85,6 +109,10 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
                 "keeper": row["status"] == "ok" and keeper_sha is None,
                 "copy_of": keeper_sha,
                 "copy_distance": distance,
+                "people": sorted(people_in.get(media_id, [])),
+                "shot": row["shot"],
+                "selfie": None if row["is_selfie"] is None else bool(row["is_selfie"]),
+                "faces": face_counts.get(media_id),
                 "paths": paths.get(media_id, []),
                 "occurrences": occurrences[media_id],
             }
@@ -121,12 +149,28 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
         )
     ]
 
+    people = sorted(
+        (p for p in person_infos(conn) if p.photos or p.named_by),
+        key=lambda p: (-p.photos, p.number),
+    )
+    shots = dict.fromkeys(("solo", "group", "none", "selfie"), 0)
+    for shot, n in conn.execute(
+        "SELECT shot, COUNT(*) FROM media WHERE shot IS NOT NULL GROUP BY shot"
+    ):
+        shots[str(shot)] = int(n)
+    (shots["selfie"],) = conn.execute("SELECT COUNT(*) FROM media WHERE is_selfie = 1").fetchone()
+
     return {
         "manifest_version": MANIFEST_VERSION,
         "tripsort_version": __version__,
         "config_hash": config.hash,
         "thresholds": asdict(config.thresholds),
-        "analyzers": {"phash": PHASH_ALGORITHM},
+        "people_settings": asdict(config.people),
+        "analyzers": {"phash": PHASH_ALGORITHM, "faces": FACE_MODEL_ID},
+        "people": [
+            {"name": p.name, "photos": p.photos, "solo": p.solo, "named_by": p.named_by}
+            for p in people
+        ],
         "summary": {
             "sources": stats.sources,
             "files_found": stats.files_found,
@@ -145,6 +189,10 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
             "bytes_saved": stats.bytes_saved,
             "exact_bytes_saved": stats.exact_bytes_saved,
             "copy_bytes_saved": stats.copy_bytes_saved,
+            "people": sum(1 for p in people if p.photos),
+            "named_people": sum(1 for p in people if p.photos and p.named_by),
+            "shots": shots,
+            "faces_not_scanned": pending_scans(conn, FACE_MODEL_ID),
         },
         "sources": sources,
         "files": files,

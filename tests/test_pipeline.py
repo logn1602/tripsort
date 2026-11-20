@@ -119,11 +119,11 @@ def test_interrupted_ingest_resumes(
     real = pipeline.analyze_image
     calls = {"n": 0}
 
-    def interrupt_on_third(data: bytes):  # type: ignore[no-untyped-def]
+    def interrupt_on_third(data: bytes, **kwargs):  # type: ignore[no-untyped-def]
         calls["n"] += 1
         if calls["n"] == 3:
             raise KeyboardInterrupt
-        return real(data)
+        return real(data, **kwargs)
 
     monkeypatch.setattr(pipeline, "analyze_image", interrupt_on_third)
     with pytest.raises(KeyboardInterrupt):

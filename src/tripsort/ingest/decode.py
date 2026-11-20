@@ -1,4 +1,5 @@
-"""Decode an image once, at reduced size, and compute what later stages need from pixels.
+"""Decode an image once, at reduced size, and compute what later stages need from pixels:
+the metadata, the pHash, and (when a face analyzer is given) the faces.
 
 Pillow's decompression-bomb check runs when an image is opened, before tripsort can use
 JPEG draft mode, so a 200 MP phone photo would be refused even though draft mode decodes
@@ -14,14 +15,17 @@ import math
 import warnings
 from dataclasses import dataclass
 
+import numpy as np
 import pi_heif
 from PIL import Image, ImageOps
 
+from tripsort.faces.types import FaceAnalyzer, FaceScan, RGBImage
 from tripsort.ingest.exif import NO_EXIF, ExifInfo, read_exif
 from tripsort.ingest.hashing import phash_hex
 
 DECODE_MAX_SIDE = 1600  # JPEGs are decoded in draft mode to about this size
 PHASH_SOURCE_SIDE = 256  # shorter side, in pixels, the pHash input is reduced towards
+FACE_SOURCE_MAX_SIDE = 2048  # other formats decode at full size; faces need no more than this
 _SNIFFED_FORMATS = ("JPEG", "PNG", "WEBP", "HEIF")
 _DRAFT_FORMATS = frozenset({"JPEG", "MPO"})
 _SAFE_MODES = frozenset({"1", "L", "LA", "P", "PA", "RGB", "RGBA", "CMYK", "YCbCr"})
@@ -41,6 +45,7 @@ class ImageAnalysis:
     phash: str | None
     decoded: bool  # whether pixels were decoded
     note: str | None = None
+    faces: FaceScan | None = None  # None when no face analyzer was given
 
 
 def _ensure_plugins() -> None:
@@ -76,8 +81,10 @@ def draft_box(size: tuple[int, int], max_side: int) -> tuple[int, int] | None:
     return max(1, math.ceil(width / scale)), max(1, math.ceil(height / scale))
 
 
-def analyze_image(data: bytes, *, max_side: int = DECODE_MAX_SIDE) -> ImageAnalysis:
-    """Decode ``data`` at reduced size and return its metadata and pHash.
+def analyze_image(
+    data: bytes, *, max_side: int = DECODE_MAX_SIDE, faces: FaceAnalyzer | None = None
+) -> ImageAnalysis:
+    """Decode ``data`` at reduced size and return its metadata, pHash, and faces.
 
     Raises ``UnreadableImageError`` when the bytes are not a decodable image.
     """
@@ -85,14 +92,16 @@ def analyze_image(data: bytes, *, max_side: int = DECODE_MAX_SIDE) -> ImageAnaly
         # Pillow warns about odd but harmless files (truncated EXIF, malformed MPO data);
         # one line per photo would bury the summary.
         warnings.simplefilter("ignore")
-        return _analyze(data, max_side)
+        return _analyze(data, max_side, faces)
 
 
-def _analyze(data: bytes, max_side: int) -> ImageAnalysis:
+def _analyze(data: bytes, max_side: int, faces: FaceAnalyzer | None) -> ImageAnalysis:
     try:
         image = open_image(data)
     except Image.DecompressionBombError as exc:
-        return ImageAnalysis(None, None, None, NO_EXIF, None, False, f"not decoded: {exc}")
+        note = f"not decoded: {exc}"
+        scan = FaceScan("not_decoded", detail=note) if faces is not None else None
+        return ImageAnalysis(None, None, None, NO_EXIF, None, False, note, scan)
     except Exception as exc:  # decoders raise many exception types on bad input
         raise UnreadableImageError(_describe(exc)) from exc
 
@@ -112,20 +121,22 @@ def _analyze(data: bytes, max_side: int) -> ImageAnalysis:
                 f"{width}x{height} is over the {limit / 1e6:.0f} MP decode limit; "
                 "checked for exact duplicates only"
             )
-            return ImageAnalysis(fmt, width, height, exif, None, False, note)
+            scan = FaceScan("not_decoded", detail=note) if faces is not None else None
+            return ImageAnalysis(fmt, width, height, exif, None, False, note, scan)
 
         try:
             image.load()
         except Exception as exc:  # same: a broken file can fail in many ways
             raise UnreadableImageError(_describe(exc)) from exc
 
+        phash: str | None = None
+        phash_note: str | None = None
         try:
             phash = phash_hex(_prepare(image))
         except Exception as exc:  # keep the file, just without a pHash
-            return ImageAnalysis(
-                fmt, width, height, exif, None, True, f"no pHash: {_describe(exc)}"
-            )
-    return ImageAnalysis(fmt, width, height, exif, phash, True)
+            phash_note = f"no pHash: {_describe(exc)}"
+        scan = _scan_faces(image, faces) if faces is not None else None
+    return ImageAnalysis(fmt, width, height, exif, phash, True, phash_note, scan)
 
 
 def _prepare(image: Image.Image) -> Image.Image:
@@ -141,6 +152,47 @@ def _prepare(image: Image.Image) -> Image.Image:
     if factor > 1:
         image = image.reduce(factor)  # keeps .info, so the EXIF orientation still applies
     return ImageOps.exif_transpose(image)
+
+
+def face_source(image: Image.Image) -> RGBImage:
+    """The decoded image as EXIF-oriented RGB pixels, at most about 2048 px on its long side.
+
+    JPEGs arrive already shrunk by draft mode; other formats are box-reduced here first.
+    """
+    rgb = image if image.mode == "RGB" else image.convert("RGB")  # convert keeps .info
+    factor = math.ceil(max(rgb.size) / FACE_SOURCE_MAX_SIDE)
+    if factor > 1:
+        rgb = rgb.reduce(factor)  # keeps .info, so the EXIF orientation still applies
+    return np.asarray(ImageOps.exif_transpose(rgb))
+
+
+def decode_oriented(data: bytes, max_side: int = DECODE_MAX_SIDE) -> RGBImage:
+    """Decode ``data`` the way ingest does and return the pixels faces are found in.
+
+    Raises ``UnreadableImageError`` when the bytes are not a decodable image.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            image = open_image(data)
+            with image:
+                if image.format in _DRAFT_FORMATS and (box := draft_box(image.size, max_side)):
+                    image.draft("RGB", box)
+                image.load()
+                return face_source(image)
+        except Exception as exc:  # decoders raise many exception types on bad input
+            raise UnreadableImageError(_describe(exc)) from exc
+
+
+def _scan_faces(image: Image.Image, analyzer: FaceAnalyzer) -> FaceScan:
+    try:
+        rgb = face_source(image)
+    except Exception as exc:  # e.g. a pixel mode with no RGB conversion
+        return FaceScan("failed", detail=f"could not prepare the pixels: {_describe(exc)}")
+    try:
+        return FaceScan("ok", analyzer.analyze(rgb))
+    except Exception as exc:  # a face scan failure never stops the ingest
+        return FaceScan("failed", detail=_describe(exc))
 
 
 def _describe(exc: BaseException) -> str:

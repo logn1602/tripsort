@@ -105,3 +105,44 @@ def test_transaction_rolls_back_on_error(tmp_path: Path) -> None:
 def test_packaged_migrations_are_numbered_from_one() -> None:
     numbers = [number for number, _ in db.migrations()]
     assert numbers == list(range(1, len(numbers) + 1))
+
+
+def test_a_phase_2_index_is_upgraded_in_place(tmp_path: Path) -> None:
+    """An index written by 0.1.0a1 (schema 1) keeps its rows and gains the people tables."""
+    path = tmp_path / "index.db"
+    old = sqlite3.connect(path, isolation_level=None)
+    number, sql = db.migrations()[0]
+    assert number == 1
+    old.executescript(
+        "BEGIN;\nCREATE TABLE schema_version (version INTEGER NOT NULL);\n"
+        f"INSERT INTO schema_version (version) VALUES (0);\n{sql}\n"
+        "UPDATE schema_version SET version = 1;\nCOMMIT;\n"
+    )
+    old.execute("INSERT INTO media (id, sha256, kind, bytes) VALUES (1, 'abc', 'image', 10)")
+    old.execute(
+        "INSERT INTO exported_files (relpath, fold_key, media_id, role, method, bytes, mtime_ns) "
+        "VALUES ('all/a.jpg', 'all/a.jpg', 1, 'all', 'extract', 10, 5)"
+    )
+    old.close()
+
+    conn = open_index(path)
+    try:
+        assert schema_version(conn) == latest_version() >= 2
+        rows = conn.execute("SELECT relpath, role FROM exported_files").fetchall()
+        assert [tuple(row) for row in rows] == [("all/a.jpg", "all")]
+        conn.execute(
+            "INSERT INTO exported_files (relpath, fold_key, media_id, role, method, bytes, "
+            "mtime_ns) VALUES ('people/sam/a.jpg', 'people/sam/a.jpg', 1, 'person', "
+            "'hardlink', 10, 5)"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO exported_files (relpath, fold_key, media_id, role, method, "
+                "bytes, mtime_ns) VALUES ('x', 'x', 1, 'bogus', 'copy', 1, 1)"
+            )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(media)")}
+        assert {"shot", "is_selfie", "is_front_camera"} <= columns
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        assert {"faces", "face_scans", "people", "ref_images", "exported_media"} <= tables
+    finally:
+        conn.close()
