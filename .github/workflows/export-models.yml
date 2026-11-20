@@ -1,0 +1,101 @@
+name: export models
+
+# Exports CLIP ViT-B/32 (OpenAI weights) to ONNX with tools/export_clip.py, makes int8
+# versions with tools/quantize.py, and puts the files on a GitHub pre-release of this
+# repository. That release holds model files only: it is never a tripsort version and never
+# marked latest, and its tag does not start with "v", so release.yml does not run. tripsort
+# pins each file's size and SHA-256 in src/tripsort/models/registry.py. A release that
+# exists is never changed; a new export needs a new tag.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [phase-4-categories-bursts]
+    paths:
+      - tools/export_clip.py
+      - tools/quantize.py
+      - .github/workflows/export-models.yml
+
+permissions: {}
+
+concurrency:
+  group: export-models
+  cancel-in-progress: false
+
+jobs:
+  export:
+    name: export CLIP to ONNX
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # creates the model release
+    env:
+      TAG: models-clip-1
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+
+      - name: Stop if the release exists
+        id: check
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::$TAG exists and is never changed; nothing to do"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Export to ONNX (checked against PyTorch)
+        if: steps.check.outputs.exists == 'false'
+        run: uv run tools/export_clip.py out --reference-images tests/fixtures/paintings
+
+      - name: Make the int8 versions
+        if: steps.check.outputs.exists == 'false'
+        run: uv run tools/quantize.py out
+
+      - name: Add the CLIP license and the checksums
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/openai/CLIP/main/LICENSE -o out/LICENSE-CLIP.txt
+          grep -q "MIT License" out/LICENSE-CLIP.txt
+          cd out
+          sha256sum *.onnx *.gz LICENSE-CLIP.txt | tee SHA256SUMS
+          ls -l
+
+      - name: Create the model release
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          {
+            echo "Model files for tripsort, not a tripsort release. tripsort downloads the ones it"
+            echo "needs on first use and checks each file's size and SHA-256 before using it."
+            echo
+            echo "CLIP ViT-B/32 with OpenAI's weights (MIT license, see LICENSE-CLIP.txt), exported"
+            echo "to ONNX with tools/export_clip.py and quantized with tools/quantize.py."
+            echo
+            echo "- image encoder: pixel_values float32 [N, 3, 224, 224] to image_embeds [N, 512]"
+            echo "- text encoder: input_ids int64 [N, 77] to text_embeds [N, 512]"
+            echo "- int8 versions of both; clip-bpe-vocab-16e6.txt.gz is the tokenizer's vocabulary"
+            echo "- export.json and quantize.json: versions, checks against PyTorch, int8 drift"
+            echo
+            echo "Built from $GITHUB_SHA by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "SHA-256:"
+            echo
+            echo '```'
+            cat out/SHA256SUMS
+            echo '```'
+          } > notes.md
+          gh release create "$TAG" \
+            out/*.onnx out/*.gz out/LICENSE-CLIP.txt out/SHA256SUMS out/export.json out/quantize.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --target main \
+            --prerelease \
+            --latest=false \
+            --title "Model files: CLIP ViT-B/32 ONNX (not a tripsort release)" \
+            --notes-file notes.md
