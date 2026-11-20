@@ -90,17 +90,25 @@ def _ratio(num: int, den: int) -> float | None:
     return round(num / den, 4) if den else None
 
 
+def aliases(everyone: Counter[str]) -> dict[str, str]:
+    """Person key -> p1, p2, ...: most labeled photos (over both splits) first."""
+    order = sorted(everyone, key=lambda k: (-everyone[k], k))
+    return {key: f"p{i}" for i, key in enumerate(order, 1)}
+
+
 def people_report(photos: list[Photo], everyone: Counter[str] | None = None) -> dict[str, Any]:
     """``everyone`` holds every labeled person with their photos over every checked row, both
     splits; a ref name no checked row lists is in it with 0. A labeled person is labeled in
     every checked row, so one predicted in a photo of this split that does not list them is
     a wrong photo, even with no labeled photo here."""
     counts: Counter[str] = Counter(t for p in photos for t in p.labeled)
-    totals = everyone if everyone is not None else counts
-    labeled = set(totals) | set(counts)
+    totals = Counter(everyone if everyone is not None else counts)
+    for key in counts:
+        totals.setdefault(key, 0)
+    labeled = set(totals)
     matching = match_people(photos, labeled)
+    alias = aliases(totals)
     order = sorted(labeled, key=lambda k: (-totals[k], k))
-    alias = {key: f"p{i}" for i, key in enumerate(order, 1)}
     tp: Counter[str] = Counter()
     fp: Counter[str] = Counter()
     fn: Counter[str] = Counter()

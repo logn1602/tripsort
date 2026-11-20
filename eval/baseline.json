@@ -225,7 +225,7 @@
         "no_usable_photo": 0
       },
       "rows_not_found": 0,
-      "seconds": 6.5,
+      "seconds": 21.4,
       "settings": {
         "agglomerative_min_similarity": 0.4,
         "attach_min_similarity": 0.5,
@@ -237,7 +237,8 @@
         "min_cluster_size": 4,
         "min_face_score": 0.8,
         "min_samples": 3,
-        "ref_min_similarity": 0.5
+        "ref_min_similarity": 0.5,
+        "suggest_min_similarity": 0.6
       },
       "shots": {
         "accuracy": 0.986,
@@ -273,7 +274,284 @@
         }
       },
       "split": "dev",
-      "tripsort_version": "0.1.0a2"
+      "suggestions": {
+        "after_accepting_all": {
+          "faces": {
+            "completeness": 1.0,
+            "homogeneity": 1.0,
+            "solo_faces": 152,
+            "unassigned": 0.0263,
+            "v_measure": 1.0
+          },
+          "macro": {
+            "precision": 0.8997,
+            "recall": 0.8963
+          },
+          "merged": 9,
+          "micro": {
+            "precision": 0.9506,
+            "recall": 0.9105
+          },
+          "per_person": [
+            {
+              "matched": true,
+              "person": "p1",
+              "photos": 107,
+              "precision": 0.9314,
+              "recall": 0.8879
+            },
+            {
+              "matched": true,
+              "person": "p2",
+              "photos": 81,
+              "precision": 1.0,
+              "recall": 0.9136
+            },
+            {
+              "matched": true,
+              "person": "p3",
+              "photos": 74,
+              "precision": 1.0,
+              "recall": 0.9459
+            },
+            {
+              "matched": true,
+              "person": "p4",
+              "photos": 88,
+              "precision": 1.0,
+              "recall": 0.9659
+            },
+            {
+              "matched": true,
+              "person": "p5",
+              "photos": 69,
+              "precision": 1.0,
+              "recall": 0.913
+            },
+            {
+              "matched": true,
+              "person": "p6",
+              "photos": 49,
+              "precision": 1.0,
+              "recall": 0.8776
+            },
+            {
+              "matched": true,
+              "person": "p7",
+              "photos": 44,
+              "precision": 0.9318,
+              "recall": 0.9318
+            },
+            {
+              "matched": true,
+              "person": "p8",
+              "photos": 34,
+              "precision": 0.871,
+              "recall": 0.7941
+            },
+            {
+              "matched": true,
+              "person": "p9",
+              "photos": 40,
+              "precision": 1.0,
+              "recall": 0.9
+            },
+            {
+              "matched": true,
+              "person": "p10",
+              "photos": 6,
+              "precision": 0.2632,
+              "recall": 0.8333
+            }
+          ]
+        },
+        "after_accepting_confirmed": {
+          "faces": {
+            "completeness": 1.0,
+            "homogeneity": 1.0,
+            "solo_faces": 152,
+            "unassigned": 0.0263,
+            "v_measure": 1.0
+          },
+          "macro": {
+            "precision": 1.0,
+            "recall": 0.8668
+          },
+          "merged": 4,
+          "micro": {
+            "precision": 1.0,
+            "recall": 0.8801
+          },
+          "per_person": [
+            {
+              "matched": true,
+              "person": "p1",
+              "photos": 107,
+              "precision": 1.0,
+              "recall": 0.7944
+            },
+            {
+              "matched": true,
+              "person": "p2",
+              "photos": 81,
+              "precision": 1.0,
+              "recall": 0.9136
+            },
+            {
+              "matched": true,
+              "person": "p3",
+              "photos": 74,
+              "precision": 1.0,
+              "recall": 0.9459
+            },
+            {
+              "matched": true,
+              "person": "p4",
+              "photos": 88,
+              "precision": 1.0,
+              "recall": 0.9659
+            },
+            {
+              "matched": true,
+              "person": "p5",
+              "photos": 69,
+              "precision": 1.0,
+              "recall": 0.913
+            },
+            {
+              "matched": true,
+              "person": "p6",
+              "photos": 49,
+              "precision": 1.0,
+              "recall": 0.8776
+            },
+            {
+              "matched": true,
+              "person": "p7",
+              "photos": 44,
+              "precision": 1.0,
+              "recall": 0.8182
+            },
+            {
+              "matched": true,
+              "person": "p8",
+              "photos": 34,
+              "precision": 1.0,
+              "recall": 0.7059
+            },
+            {
+              "matched": true,
+              "person": "p9",
+              "photos": 40,
+              "precision": 1.0,
+              "recall": 0.9
+            },
+            {
+              "matched": true,
+              "person": "p10",
+              "photos": 6,
+              "precision": 1.0,
+              "recall": 0.8333
+            }
+          ]
+        },
+        "candidates": [
+          {
+            "confirmed": false,
+            "dev_photos": 7,
+            "named": "p7",
+            "photos": 16,
+            "rank": 1,
+            "right": 4,
+            "similarity": 0.781,
+            "wrong": 3
+          },
+          {
+            "confirmed": true,
+            "dev_photos": 3,
+            "named": "p7",
+            "photos": 7,
+            "rank": 1,
+            "right": 3,
+            "similarity": 0.779,
+            "wrong": 0
+          },
+          {
+            "confirmed": true,
+            "dev_photos": 3,
+            "named": "p9",
+            "photos": 5,
+            "rank": 1,
+            "right": 3,
+            "similarity": 0.741,
+            "wrong": 0
+          },
+          {
+            "confirmed": true,
+            "dev_photos": 25,
+            "named": "p1",
+            "photos": 45,
+            "rank": 1,
+            "right": 25,
+            "similarity": 0.703,
+            "wrong": 0
+          },
+          {
+            "confirmed": true,
+            "dev_photos": 8,
+            "named": "p1",
+            "photos": 11,
+            "rank": 1,
+            "right": 8,
+            "similarity": 0.701,
+            "wrong": 0
+          },
+          {
+            "confirmed": false,
+            "dev_photos": 14,
+            "named": "p10",
+            "photos": 23,
+            "rank": 1,
+            "right": 0,
+            "similarity": 0.684,
+            "wrong": 14
+          },
+          {
+            "confirmed": false,
+            "dev_photos": 9,
+            "named": "p1",
+            "photos": 17,
+            "rank": 1,
+            "right": 8,
+            "similarity": 0.681,
+            "wrong": 1
+          },
+          {
+            "confirmed": false,
+            "dev_photos": 8,
+            "named": "p1",
+            "photos": 10,
+            "rank": 1,
+            "right": 2,
+            "similarity": 0.678,
+            "wrong": 6
+          },
+          {
+            "confirmed": false,
+            "dev_photos": 7,
+            "named": "p8",
+            "photos": 16,
+            "rank": 1,
+            "right": 3,
+            "similarity": 0.668,
+            "wrong": 4
+          }
+        ],
+        "confirmed": 4,
+        "shown": 9,
+        "with_two_candidates": 0
+      },
+      "tripsort_version": "0.1.0a3"
     },
     "private_test": {
       "categories_labeled": {
@@ -443,6 +721,453 @@
       },
       "split": "test",
       "tripsort_version": "0.1.0a2"
+    },
+    "private_test_second_look": {
+      "categories_labeled": {
+        "food": 2,
+        "other": 316,
+        "scenery": 16
+      },
+      "checked_rows": 334,
+      "faces": {
+        "completeness": 0.9494,
+        "homogeneity": 1.0,
+        "solo_faces": 114,
+        "unassigned": 0.0088,
+        "v_measure": 0.974
+      },
+      "labeled_names_without_a_ref": 0,
+      "people": {
+        "labeled_people": 10,
+        "macro": {
+          "precision": 1.0,
+          "recall": 0.8055
+        },
+        "matched_by_name": 10,
+        "matched_by_photos": 0,
+        "micro": {
+          "precision": 1.0,
+          "recall": 0.8198
+        },
+        "other_predicted_people": 32,
+        "per_person": [
+          {
+            "matched": true,
+            "person": "p1",
+            "photos": 93,
+            "precision": 1.0,
+            "recall": 0.5269
+          },
+          {
+            "matched": true,
+            "person": "p2",
+            "photos": 89,
+            "precision": 1.0,
+            "recall": 0.9438
+          },
+          {
+            "matched": true,
+            "person": "p3",
+            "photos": 94,
+            "precision": 1.0,
+            "recall": 0.883
+          },
+          {
+            "matched": true,
+            "person": "p4",
+            "photos": 78,
+            "precision": 1.0,
+            "recall": 0.9359
+          },
+          {
+            "matched": true,
+            "person": "p5",
+            "photos": 82,
+            "precision": 1.0,
+            "recall": 0.9146
+          },
+          {
+            "matched": true,
+            "person": "p6",
+            "photos": 64,
+            "precision": 1.0,
+            "recall": 0.9219
+          },
+          {
+            "matched": true,
+            "person": "p7",
+            "photos": 51,
+            "precision": 1.0,
+            "recall": 0.7255
+          },
+          {
+            "matched": true,
+            "person": "p8",
+            "photos": 52,
+            "precision": 1.0,
+            "recall": 0.7115
+          },
+          {
+            "matched": true,
+            "person": "p9",
+            "photos": 45,
+            "precision": 1.0,
+            "recall": 0.7778
+          },
+          {
+            "matched": true,
+            "person": "p10",
+            "photos": 7,
+            "precision": 1.0,
+            "recall": 0.7143
+          }
+        ],
+        "predicted_people": 42
+      },
+      "ref_copies": {
+        "closest_phash_distance": 14,
+        "flagged": [],
+        "highest_face_similarity": 0.806,
+        "near_copy": 0,
+        "ref_photos": 28,
+        "same_face": 0,
+        "same_file": 0
+      },
+      "refs": {
+        "files_skipped": 0,
+        "named": 10,
+        "names": 10,
+        "no_match": 0,
+        "no_usable_photo": 0
+      },
+      "rows_not_found": 0,
+      "seconds": 21.0,
+      "settings": {
+        "agglomerative_min_similarity": 0.4,
+        "attach_min_similarity": 0.5,
+        "background_min_similarity": 0.5,
+        "cluster_method": "hdbscan",
+        "foreground_min_height": 0.03,
+        "foreground_min_ratio": 0.3,
+        "member_min_similarity": 0.3,
+        "min_cluster_size": 4,
+        "min_face_score": 0.8,
+        "min_samples": 3,
+        "ref_min_similarity": 0.5,
+        "suggest_min_similarity": 0.6
+      },
+      "shots": {
+        "accuracy": 0.985,
+        "confusion": {
+          "labels": [
+            "solo",
+            "group",
+            "none"
+          ],
+          "rows_true_columns_predicted": [
+            [
+              122,
+              0,
+              2
+            ],
+            [
+              0,
+              185,
+              3
+            ],
+            [
+              0,
+              0,
+              22
+            ]
+          ]
+        },
+        "not_scanned": 0,
+        "selfie": {
+          "labeled": 31,
+          "precision": 1.0,
+          "recall": 0.9355
+        }
+      },
+      "split": "test",
+      "suggestions": {
+        "after_accepting_all": {
+          "faces": {
+            "completeness": 1.0,
+            "homogeneity": 1.0,
+            "solo_faces": 114,
+            "unassigned": 0.0088,
+            "v_measure": 1.0
+          },
+          "macro": {
+            "precision": 0.9249,
+            "recall": 0.8942
+          },
+          "merged": 9,
+          "micro": {
+            "precision": 0.9704,
+            "recall": 0.9008
+          },
+          "per_person": [
+            {
+              "matched": true,
+              "person": "p1",
+              "photos": 93,
+              "precision": 0.9643,
+              "recall": 0.871
+            },
+            {
+              "matched": true,
+              "person": "p2",
+              "photos": 89,
+              "precision": 1.0,
+              "recall": 0.9438
+            },
+            {
+              "matched": true,
+              "person": "p3",
+              "photos": 94,
+              "precision": 1.0,
+              "recall": 0.883
+            },
+            {
+              "matched": true,
+              "person": "p4",
+              "photos": 78,
+              "precision": 1.0,
+              "recall": 0.9359
+            },
+            {
+              "matched": true,
+              "person": "p5",
+              "photos": 82,
+              "precision": 1.0,
+              "recall": 0.9146
+            },
+            {
+              "matched": true,
+              "person": "p6",
+              "photos": 64,
+              "precision": 1.0,
+              "recall": 0.9219
+            },
+            {
+              "matched": true,
+              "person": "p7",
+              "photos": 51,
+              "precision": 0.9216,
+              "recall": 0.9216
+            },
+            {
+              "matched": true,
+              "person": "p8",
+              "photos": 52,
+              "precision": 0.9348,
+              "recall": 0.8269
+            },
+            {
+              "matched": true,
+              "person": "p9",
+              "photos": 45,
+              "precision": 1.0,
+              "recall": 0.8667
+            },
+            {
+              "matched": true,
+              "person": "p10",
+              "photos": 7,
+              "precision": 0.4286,
+              "recall": 0.8571
+            }
+          ]
+        },
+        "after_accepting_confirmed": {
+          "faces": {
+            "completeness": 1.0,
+            "homogeneity": 1.0,
+            "solo_faces": 114,
+            "unassigned": 0.0088,
+            "v_measure": 1.0
+          },
+          "macro": {
+            "precision": 1.0,
+            "recall": 0.8511
+          },
+          "merged": 4,
+          "micro": {
+            "precision": 1.0,
+            "recall": 0.8718
+          },
+          "per_person": [
+            {
+              "matched": true,
+              "person": "p1",
+              "photos": 93,
+              "precision": 1.0,
+              "recall": 0.7957
+            },
+            {
+              "matched": true,
+              "person": "p2",
+              "photos": 89,
+              "precision": 1.0,
+              "recall": 0.9438
+            },
+            {
+              "matched": true,
+              "person": "p3",
+              "photos": 94,
+              "precision": 1.0,
+              "recall": 0.883
+            },
+            {
+              "matched": true,
+              "person": "p4",
+              "photos": 78,
+              "precision": 1.0,
+              "recall": 0.9359
+            },
+            {
+              "matched": true,
+              "person": "p5",
+              "photos": 82,
+              "precision": 1.0,
+              "recall": 0.9146
+            },
+            {
+              "matched": true,
+              "person": "p6",
+              "photos": 64,
+              "precision": 1.0,
+              "recall": 0.9219
+            },
+            {
+              "matched": true,
+              "person": "p7",
+              "photos": 51,
+              "precision": 1.0,
+              "recall": 0.8235
+            },
+            {
+              "matched": true,
+              "person": "p8",
+              "photos": 52,
+              "precision": 1.0,
+              "recall": 0.7115
+            },
+            {
+              "matched": true,
+              "person": "p9",
+              "photos": 45,
+              "precision": 1.0,
+              "recall": 0.8667
+            },
+            {
+              "matched": true,
+              "person": "p10",
+              "photos": 7,
+              "precision": 1.0,
+              "recall": 0.7143
+            }
+          ]
+        },
+        "candidates": [
+          {
+            "confirmed": false,
+            "dev_photos": 7,
+            "named": "p7",
+            "photos": 16,
+            "rank": 1,
+            "right": 4,
+            "similarity": 0.781,
+            "wrong": 3
+          },
+          {
+            "confirmed": true,
+            "dev_photos": 3,
+            "named": "p7",
+            "photos": 7,
+            "rank": 1,
+            "right": 3,
+            "similarity": 0.779,
+            "wrong": 0
+          },
+          {
+            "confirmed": true,
+            "dev_photos": 3,
+            "named": "p9",
+            "photos": 5,
+            "rank": 1,
+            "right": 3,
+            "similarity": 0.741,
+            "wrong": 0
+          },
+          {
+            "confirmed": true,
+            "dev_photos": 25,
+            "named": "p1",
+            "photos": 45,
+            "rank": 1,
+            "right": 25,
+            "similarity": 0.703,
+            "wrong": 0
+          },
+          {
+            "confirmed": true,
+            "dev_photos": 8,
+            "named": "p1",
+            "photos": 11,
+            "rank": 1,
+            "right": 8,
+            "similarity": 0.701,
+            "wrong": 0
+          },
+          {
+            "confirmed": false,
+            "dev_photos": 14,
+            "named": "p10",
+            "photos": 23,
+            "rank": 1,
+            "right": 0,
+            "similarity": 0.684,
+            "wrong": 14
+          },
+          {
+            "confirmed": false,
+            "dev_photos": 9,
+            "named": "p1",
+            "photos": 17,
+            "rank": 1,
+            "right": 8,
+            "similarity": 0.681,
+            "wrong": 1
+          },
+          {
+            "confirmed": false,
+            "dev_photos": 8,
+            "named": "p1",
+            "photos": 10,
+            "rank": 1,
+            "right": 2,
+            "similarity": 0.678,
+            "wrong": 6
+          },
+          {
+            "confirmed": false,
+            "dev_photos": 7,
+            "named": "p8",
+            "photos": 16,
+            "rank": 1,
+            "right": 3,
+            "similarity": 0.668,
+            "wrong": 4
+          }
+        ],
+        "confirmed": 4,
+        "shown": 9,
+        "with_two_candidates": 0
+      },
+      "tripsort_version": "0.1.0a3"
     }
   }
 }
