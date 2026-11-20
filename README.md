@@ -2,7 +2,7 @@
 
 Offline Python library + CLI that merges trip photo zips, removes duplicates, and sorts photos by person, shot type, and category.
 
-> **Status: alpha (0.1.0a3).** This pre-release reads your zips, removes exact duplicates and
+> **Status: alpha (0.1.0).** This version reads your zips, removes exact duplicates and
 > recompressed copies (such as WhatsApp copies), finds everyone's faces, and exports one clean
 > folder plus a folder per person and per shot type (solo, group, selfie), with a
 > `manifest.json`. Sorting by category and culling bursts come in later releases.
@@ -25,13 +25,13 @@ Everything runs locally on an ordinary laptop CPU: no account, no cloud uploads,
 
 ## Install
 
-Requires Python 3.11 or newer. 0.1.0a3 is a pre-release, so ask for it by version:
+Requires Python 3.11 or newer.
 
 ```console
-uvx tripsort@0.1.0a3 --version
+pip install tripsort
 ```
 
-or `pip install --pre tripsort`.
+Or run it without installing, with uv: `uvx tripsort --version`.
 
 ## Usage
 
