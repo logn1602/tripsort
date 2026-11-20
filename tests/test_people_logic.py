@@ -17,6 +17,14 @@ from tripsort.faces.identity import carry_over
 from tripsort.faces.names import check_name, display_name, name_key
 from tripsort.faces.naming import match_refs
 from tripsort.faces.shots import is_front_camera, is_selfie, shot_type
+from tripsort.faces.suggest import (
+    Candidate,
+    Suggestion,
+    people_command,
+    pick_candidates,
+    shell_arg,
+    suggestion_lines,
+)
 from tripsort.faces.types import normalized
 
 SETTINGS = load_config().people
@@ -271,3 +279,102 @@ def test_one_recurring_person_still_forms_a_cluster() -> None:
     assert (labels == 0).sum() >= 3  # without the retry, HDBSCAN finds no cluster at all
     joined, _ = attach_noise(emb, labels, range(5), SETTINGS.attach_min_similarity)
     assert joined.tolist() == [0] * 5
+
+
+# merge suggestions
+
+
+def axes(n: int) -> list[np.ndarray]:
+    return [np.eye(1, 128, i, dtype=np.float32)[0] for i in range(n)]
+
+
+def mix(*parts: tuple[np.ndarray, float]) -> np.ndarray:
+    return normalized(sum(weight * vector for vector, weight in parts)).astype(np.float32)
+
+
+def test_an_unnamed_person_close_to_a_named_one_is_suggested() -> None:
+    sam, kim, other = axes(3)
+    unnamed = {10: mix((sam, 0.72), (other, 0.694)), 11: other}
+    named = {1: sam, 2: kim}
+    picked = pick_candidates(unnamed, named, {}, set(), min_similarity=0.6)
+    assert list(picked) == [10]  # 11 is like nobody
+    (person, similarity), *rest = picked[10]
+    assert (person, round(similarity, 2), rest) == (1, 0.72, [])
+    assert pick_candidates(unnamed, named, {}, set(), min_similarity=0.75) == {}
+    assert pick_candidates({}, named, {}, set(), 0.6) == pick_candidates(
+        unnamed, {}, {}, set(), 0.6
+    )
+
+
+def test_two_people_in_one_photo_are_never_suggested() -> None:
+    sam, _, other = axes(3)
+    unnamed = {10: mix((sam, 0.8), (other, 0.6))}
+    photos = {10: {5, 6}, 1: {6, 7}}  # photo 6 has a face of each, a background one counts
+    assert pick_candidates(unnamed, {1: sam}, photos, set(), 0.6) == {}
+    assert list(pick_candidates(unnamed, {1: sam}, {10: {5}, 1: {7}}, set(), 0.6)) == [10]
+
+
+def test_a_dismissed_pair_is_not_suggested_again() -> None:
+    sam, kim, other = axes(3)
+    unnamed = {10: mix((sam, 0.7), (kim, 0.55), (other, 0.45))}
+    named = {1: sam, 2: kim}
+    assert [p for p, _ in pick_candidates(unnamed, named, {}, set(), 0.5)[10]] == [1]
+    after = pick_candidates(unnamed, named, {}, {frozenset((10, 1))}, 0.5)
+    assert [p for p, _ in after[10]] == [2]  # the next one still shows, if close enough
+    assert pick_candidates(unnamed, named, {}, {frozenset((1, 10))}, 0.6) == {}
+
+
+def test_a_close_second_is_shown_too() -> None:
+    sam, kim, other = axes(3)
+    named = {1: sam, 2: kim}
+    close = {10: mix((sam, 0.68), (kim, 0.66), (other, 0.32))}
+    assert [p for p, _ in pick_candidates(close, named, {}, set(), 0.6)[10]] == [1, 2]
+    apart = {10: mix((sam, 0.75), (kim, 0.62), (other, 0.23))}  # 0.13 behind: not shown
+    assert [p for p, _ in pick_candidates(apart, named, {}, set(), 0.6)[10]] == [1]
+    # a second that shares a photo is not a candidate at all
+    shared = pick_candidates(close, named, {10: {3}, 2: {3}}, set(), 0.6)
+    assert [p for p, _ in shared[10]] == [1]
+    below = pick_candidates(close, named, {}, set(), 0.665)  # the second is under the bar
+    assert [p for p, _ in below[10]] == [1]
+
+
+def test_suggestions_print_the_exact_commands() -> None:
+    one = Suggestion("person_07", 7, 45, (Candidate("Sam", 2, 0.703),))
+    two = Suggestion(
+        "person_12", 12, 1, (Candidate("Kim", 3, 0.67), Candidate("Mary Ann", 4, 0.64))
+    )
+    lines = suggestion_lines([one, two], "my trip/sorted")
+    assert lines[0] == (
+        "Maybe the same person (2 suggestions); check "
+        '`tripsort people review "my trip/sorted"` before merging:'
+    )
+    assert lines[1:4] == [
+        "  person_07 (45 photos) may be Sam (similarity 0.70)",
+        '    merge:   tripsort people merge "my trip/sorted" person_07 Sam',
+        '    dismiss: tripsort people dismiss "my trip/sorted" person_07 Sam',
+    ]
+    assert lines[4] == (
+        "  person_12 (1 photo) may be Kim (similarity 0.67) or Mary Ann (similarity 0.64)"
+    )
+    assert lines[5:] == [
+        '    merge:   tripsort people merge "my trip/sorted" person_12 Kim',
+        '    merge:   tripsort people merge "my trip/sorted" person_12 "Mary Ann"',
+        '    dismiss: tripsort people dismiss "my trip/sorted" person_12 Kim',
+        '    dismiss: tripsort people dismiss "my trip/sorted" person_12 "Mary Ann"',
+    ]
+    short = suggestion_lines([one, two], "sorted", limit=1)
+    assert short[-1] == "  1 more: tripsort people list sorted"
+    assert suggestion_lines([], "sorted") == []
+
+
+def test_command_arguments_are_quoted_for_a_shell() -> None:
+    assert shell_arg("sorted") == "sorted"
+    assert shell_arg(r"C:\Users\me\sorted") == r"C:\Users\me\sorted"
+    assert shell_arg("José") == "José"
+    assert shell_arg("Mary Ann") == '"Mary Ann"'
+    assert shell_arg("it's") == '"it\'s"'
+    assert shell_arg('the "boss"') == "'the \"boss\"'"
+    assert shell_arg("") == '""'
+    assert people_command("merge", "sorted", "person_07", "-dash") == (
+        "tripsort people merge -- sorted person_07 -dash"
+    )

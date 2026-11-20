@@ -140,7 +140,7 @@ def run(
             err.print("[yellow]warning:[/] --refs is not used: the face models are not available.")
             refs = None
         analyzed = _analyze_with_refs(project, refs)
-        typer.echo(analyzed.summary())
+        typer.echo(analyzed.summary(project=str(out)))
         exported = project.export(
             hardlinks=not copy,
             dry_run=dry_run,
@@ -182,7 +182,7 @@ def analyze(project_dir: ProjectArg, refs: RefsOpt = None, benchmark: BenchmarkO
     _check_refs(refs)
     with _project(project_dir) as project:
         result = _analyze_with_refs(project, refs)
-        typer.echo(result.summary())
+        typer.echo(result.summary(project=str(project_dir)))
         if benchmark:
             _show_benchmark(None, result, None)
 
@@ -238,7 +238,7 @@ def clean(
 
 people_app = typer.Typer(
     cls=_Group,
-    help="List, review, rename, and merge the people found in a project.",
+    help="List, review, rename, merge, and keep apart the people found in a project.",
     no_args_is_help=True,
 )
 app.add_typer(people_app, name="people")
@@ -246,9 +246,12 @@ app.add_typer(people_app, name="people")
 
 @people_app.command("list")
 def people_list(project_dir: ProjectArg) -> None:
-    """Show everyone found, most photos first."""
+    """Show everyone found, most photos first, then the suggested merges."""
+    from tripsort.faces.suggest import suggestion_lines
+
     with _project(project_dir) as project:
         people = project.people.all()
+        suggestions = project.people.suggestions()
     if not people:
         typer.echo("No people found yet.")
         return
@@ -257,6 +260,10 @@ def people_list(project_dir: ProjectArg) -> None:
     for p in people:
         named_by = {"refs": "refs/", "user": "you"}.get(p.named_by or "", "-")
         typer.echo(f"{p.name:<{width}}  {p.photos:>6,}  {p.solo:>5,}  {p.faces:>6,}  {named_by}")
+    lines = suggestion_lines(suggestions, str(project_dir))
+    if lines:
+        typer.echo("")
+        typer.echo("\n".join(lines))
 
 
 @people_app.command("review")
@@ -266,9 +273,12 @@ def people_review(
         int, typer.Option(min=1, help="Sample faces shown for each person.")
     ] = 24,
 ) -> None:
-    """Write review/people.html: sample face crops for each person, to check before sharing."""
+    """Write review/people.html: the suggested merges with every face of the person
+    suggested, and sample face crops for each person, to check before sharing."""
     with _project(project_dir) as project:
-        path = project.people.review(per_person=per_person, progress=_RichProgress())
+        path = project.people.review(
+            per_person=per_person, progress=_RichProgress(), project=str(project_dir)
+        )
     typer.echo(f"Wrote {path}")
     typer.echo("It shows faces, so keep it private; `tripsort clean` deletes it with the index.")
 
@@ -295,6 +305,22 @@ def people_merge(
     with _project(project_dir) as project:
         info = project.people.merge(person, into)
     typer.echo(f"Merged {person} into {info.name}, who now has {count(info.photos, 'photo')}.")
+
+
+@people_app.command("dismiss")
+def people_dismiss(
+    project_dir: ProjectArg,
+    person: Annotated[str, typer.Argument(help="A name, or person_NN.")],
+    other: Annotated[str, typer.Argument(help="The person they are not.")],
+) -> None:
+    """Say two people are not one: their merge is never suggested again, and later
+    clusterings keep them apart."""
+    with _project(project_dir) as project:
+        first, second = project.people.dismiss(person, other)
+    typer.echo(
+        f"Keeping {first.name} and {second.name} apart; "
+        "tripsort will not suggest merging them again."
+    )
 
 
 models_app = typer.Typer(

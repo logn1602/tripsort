@@ -60,6 +60,7 @@ def test_hash_is_stable() -> None:
         ("[people]\nmin_cluster_size = 1\n", "must be between 2 and"),
         ("[people]\nmin_face_score = 0.4\n", "must be between 0.5 and 1.0"),
         ("[people]\nref_min_similarity = 1.5\n", "must be between"),
+        ("[people]\nsuggest_min_similarity = -2\n", "must be between -1.0 and 1.0"),
     ],
 )
 def test_invalid_project_file(tmp_path: Path, text: str, message: str) -> None:
@@ -72,6 +73,7 @@ def test_people_defaults_and_overrides(tmp_path: Path) -> None:
     people = load_config().people
     assert (people.cluster_method, people.min_cluster_size, people.min_samples) == ("hdbscan", 4, 3)
     assert people.ref_min_similarity == 0.5
+    assert people.suggest_min_similarity == 0.6
     assert (people.foreground_min_ratio, people.foreground_min_height) == (0.3, 0.03)
     folder = write_override(
         tmp_path, '[people]\ncluster_method = "agglomerative"\nattach_min_similarity = 1\n'

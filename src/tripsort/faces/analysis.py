@@ -9,7 +9,9 @@ The steps, in order:
 4. carrying people over from the last analysis (see ``identity``);
 5. names from refs/;
 6. background faces of named people, under a stricter threshold;
-7. shot types and selfies.
+7. shot types and selfies;
+8. merge suggestions: unnamed people who may be a named person split in two (see
+   ``suggest``). Nothing is merged; the user decides.
 """
 
 import sqlite3
@@ -26,6 +28,7 @@ from tripsort.faces.identity import carry_over
 from tripsort.faces.names import display_name, name_key
 from tripsort.faces.naming import load_refs, match_refs
 from tripsort.faces.shots import is_front_camera, is_selfie, shot_type
+from tripsort.faces.suggest import Suggestion, suggest_merges
 from tripsort.faces.types import EMBEDDING_SIZE, FACE_MODEL_ID, normalized
 from tripsort.index.db import get_meta, set_meta
 
@@ -47,6 +50,8 @@ class PeopleStats:
     not_scanned: int = 0  # kept photos without a face scan yet
     joined: list[tuple[str, ...]] = field(default_factory=list)  # confirmed people kept apart
     refs_unmatched: list[str] = field(default_factory=list)  # ref names that named nobody
+    # unnamed people who may be a named person split in two, most similar first
+    suggestions: list[Suggestion] = field(default_factory=list)
 
 
 def analyze_people(
@@ -231,6 +236,7 @@ def analyze_people(
             for group in carry.joined
         ],
         refs_unmatched=sorted(set(refs) - set(matches.matched) - matches.settled),
+        suggestions=suggest_merges(conn, settings.suggest_min_similarity),
     )
 
 

@@ -35,6 +35,7 @@ _RANGES: dict[str, tuple[float, float]] = {
     "attach_min_similarity": (-1.0, 1.0),
     "ref_min_similarity": (-1.0, 1.0),
     "background_min_similarity": (-1.0, 1.0),
+    "suggest_min_similarity": (-1.0, 1.0),
 }
 # Allowed values for each text setting.
 _CHOICES: dict[str, tuple[str, ...]] = {"cluster_method": CLUSTER_METHODS}
@@ -65,6 +66,7 @@ class PeopleSettings:
     attach_min_similarity: float
     ref_min_similarity: float
     background_min_similarity: float
+    suggest_min_similarity: float
 
 
 @dataclass(frozen=True)
