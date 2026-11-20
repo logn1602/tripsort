@@ -287,11 +287,16 @@ uv run eval/run_eval.py people   --refs REFS --work WORK [--split dev|test] [--s
 ```
 
 `prelabel` writes `labels.csv` (one row per kept photo, filled with tripsort's guesses) and
-`labels.html` (each row's photo, face boxes, and guesses) into that folder; it never
-overwrites a `labels.csv` without `--force`. Only the people in `REFS` are labeled
-(yourself and the friends you chose): list them in every row they are in, and leave
-everyone else out. The shot type counts everyone. Fix the wrong rows and mark the reviewed
-ones `checked`. `people` then prints, for the checked rows of one split, precision and
+`labels.html`, a click-to-label page for it, into that folder. It never overwrites a
+`labels.csv` without `--force`; run again, it only rebuilds the page from `labels.csv` as it
+is. On the page, each photo shows tripsort's face boxes next to buttons for the people in
+`REFS`, the shot type, selfie, category, and checked, and each has a key (Enter marks a row
+checked and moves to the next). Changes are kept in the browser as you make them, and
+**Save labels.csv** writes the file: Edge and Chrome write it in place, other browsers
+download it. Only the people in `REFS` are labeled (yourself and the friends you chose):
+list them in every row they are in, and leave everyone else out. The shot type counts
+everyone. Fix the wrong rows and mark the reviewed ones checked. `people` then prints, for
+the checked rows of one split, precision and
 recall for each labeled person, shot-type accuracy, and face-level homogeneity and
 completeness from solo photos of labeled people: tune on `dev`, report `test` once. Every
 name in `REFS` is a labeled person, even one no checked row lists, so tripsort putting it

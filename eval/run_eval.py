@@ -8,8 +8,9 @@
                                    [--set people.KEY=VALUE ...] [--name NAME] [--write-baseline]
 
 The labeled set is the folder named by ``TRIPSORT_EVAL_DIR`` (see eval/datasets.py).
-``prelabel`` writes labels.csv (unless it exists) and labels.html into that folder, filled
-with tripsort's guesses; ``people`` scores the checked rows of labels.csv. With ``--refs``,
+``prelabel`` writes labels.csv (unless it exists), filled with tripsort's guesses, and
+labels.html, a click-to-label page for it, into that folder (see eval/labels_page.py);
+``people`` scores the checked rows of labels.csv. With ``--refs``,
 both also check that no ref photo is a copy of a labeled photo (see eval/ref_copies.py).
 ``--work`` keeps the zips and the index between runs, so a run after the first only analyzes.
 
@@ -19,6 +20,7 @@ p2, ... ``--write-baseline`` stores the numbers in eval/baseline.json.
 
 import argparse
 import csv
+import hashlib
 import json
 import sys
 import tempfile
@@ -337,7 +339,8 @@ def prelabel(
     *,
     force: bool = False,
 ) -> dict[str, Any]:
-    """Write labels.csv (unless it exists) and labels.html into the labeled set's folder."""
+    """Write labels.csv (unless it exists) and labels.html into the labeled set's folder.
+    The page starts from labels.csv as it is, with tripsort's guesses as the face boxes."""
     project, sources, named = people_project(root, work, refs, overrides or {})
     with project:
         refs_report = _refs_report(project, refs, named)
@@ -350,20 +353,25 @@ def prelabel(
             rows, problems = _guess_rows(files, kept), []
             write_rows(csv_path, rows)
             state = "written"
+        csv_sha256 = hashlib.sha256(csv_path.read_bytes()).hexdigest()
+        names = _button_names(named, rows)
         cards = []
         missing = 0
         with ZipCache(project.connection) as zips:
             for row in rows:
+                card = Card(
+                    row=row.row,
+                    file=row.file,
+                    split=row.split,
+                    checked=row.checked,
+                    people=list(row.people),
+                    shot=row.shot,
+                    selfie=row.selfie,
+                    category=row.category,
+                )
                 media_id = files.get(row.file)
                 guess = kept.get(media_id) if media_id is not None else None
-                card = Card(row.row, row.file, row.split, [], "", False, "")
                 if guess is not None:
-                    card.people, card.shot, card.selfie = (
-                        sorted(guess.named),
-                        guess.shot or "",
-                        guess.selfie,
-                    )
-                    card.category = "other" if guess.shot in ("solo", "group") else ""
                     card.boxes = guess.boxes
                     data = zips.read(guess.media_id, guess.sha256)
                     if data is not None:
@@ -373,7 +381,8 @@ def prelabel(
                 if card.thumb is None:
                     missing += 1
                 cards.append(card)
-        write_page(root / LABELS_HTML, cards)
+        # saving from the page would drop the rows labels.csv could not read
+        write_page(root / LABELS_HTML, cards, names, csv_sha256=csv_sha256, can_save=not problems)
         people_found = {name for p in kept.values() for name in p.people}
         named_found = {name for p in kept.values() for name in p.named}
     return {
@@ -390,7 +399,22 @@ def prelabel(
         "photos_with_named_people": sum(bool(p.named) for p in kept.values()),
         "labels_csv": state,
         "labels_html": "written",
+        "name_buttons": len(names),
     }
+
+
+def _button_names(named: RefsResult | None, rows: list[Row]) -> list[str]:
+    """The names labels.html has a button for: every ref name, or without refs, every name in
+    labels.csv (its first spelling). Ignoring case, alphabetical."""
+    if named is not None:
+        names = list(named.names)
+    else:
+        first: dict[str, str] = {}
+        for row in rows:
+            for name in row.people:
+                first.setdefault(person_key(name), name)
+        names = list(first.values())
+    return sorted(names, key=lambda n: (n.casefold(), n))
 
 
 def evaluate_people(

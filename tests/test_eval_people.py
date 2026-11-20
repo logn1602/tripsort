@@ -5,9 +5,12 @@ the output: the real labeled set holds friends' photos and names.
 """
 
 import csv
+import hashlib
 import json
+import re
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fake_faces import MarkerFaceAnalyzer, face_photo
@@ -260,6 +263,65 @@ def test_people_without_a_ref_are_left_unscored(
         assert result["people"]["micro"]["recall"] in (1.0, None)
     assert sum(r["people"]["other_predicted_people"] for r in results) >= 1
     assert sum(r["faces"]["solo_faces"] for r in results) == 4  # the solo photos of Zorblax
+
+
+def page_data(root: Path) -> dict[str, Any]:
+    """The data labels.html's script starts from (the page shows made-up photos here)."""
+    text = (root / "labels.html").read_text(encoding="utf-8")
+    found = re.search(
+        r"<script type='application/json' id='labels-data'>(.*?)</script>", text, re.S
+    )
+    assert found is not None
+    data: dict[str, Any] = json.loads(found.group(1))
+    return data
+
+
+def test_the_page_starts_from_labels_csv(
+    labeled_set: Path,
+    marker_faces: MarkerFaceAnalyzer,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    refs = tmp_path / "refs"
+    refs.mkdir()
+    face_photo([(0, 0.3, 0.2, 0.5)], seed=40).save(refs / "Zorblax.jpg")
+    face_photo([(1, 0.3, 0.2, 0.5)], seed=41).save(refs / "quuxine.jpg")
+    work = tmp_path / "work"
+    code, out = run(capsys, "prelabel", "--work", work, "--refs", refs)
+    assert (code, json.loads(out)["name_buttons"]) == (0, 2)
+    first = page_data(labeled_set)
+    assert (first["names"], first["canSave"]) == (["quuxine", "Zorblax"], True)
+    label_everything(labeled_set, {"0": "Zorblax", "1": "quuxine"})
+    run(capsys, "prelabel", "--work", work, "--refs", refs)  # writes only the page again
+    rows, _ = labels_module.read_rows(labeled_set / "labels.csv")
+    data = page_data(labeled_set)
+    assert [
+        (r["row"], r["file"], r["checked"], r["people"], r["shot"], r["selfie"], r["category"])
+        for r in data["rows"]
+    ] == [(r.row, r.file, r.checked, r.people, r.shot, r.selfie, r.category) for r in rows]
+    assert data["set"] == first["set"]  # the same rows
+    assert data["base"] != first["base"]  # with the labels from the file
+    csv_bytes = (labeled_set / "labels.csv").read_bytes()
+    assert data["csvSha256"] == hashlib.sha256(csv_bytes).hexdigest()
+
+
+def test_the_page_never_saves_over_rows_it_could_not_read(
+    labeled_set: Path,
+    marker_faces: MarkerFaceAnalyzer,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run(capsys, "prelabel", "--work", tmp_path / "work")
+    path = labeled_set / "labels.csv"
+    text = path.read_text(encoding="utf-8").splitlines()
+    first = text[1].split(",")
+    first[5] = "sideways"  # not a shot
+    text[1] = ",".join(first)
+    path.write_text("\n".join(text) + "\n", encoding="utf-8")
+    code, out = run(capsys, "prelabel", "--work", tmp_path / "work")
+    assert (code, json.loads(out)["label_problems"]) == (0, 1)
+    data = page_data(labeled_set)
+    assert (data["canSave"], len(data["rows"])) == (False, 9)
 
 
 def test_settings_can_be_tried_without_editing_files(
