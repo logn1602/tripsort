@@ -10,9 +10,9 @@ migration or config file missing from the wheel, that the test suite cannot see.
 checks every photo was scanned for faces, so the face models must download (or already be
 in the model cache) and pass their SHA-256 check.
 
-    uv run --with dist/tripsort-0.1.0a2-py3-none-any.whl tools/smoke_test.py   # a built wheel
-    uv run python tools/smoke_test.py                                       # the dev install
-    uv run tools/smoke_test.py uvx --from tripsort==0.1.0a2 tripsort         # any command
+    uv run --with dist/tripsort-0.1.0-py3-none-any.whl tools/smoke_test.py   # a built wheel
+    uv run python tools/smoke_test.py                                     # the dev install
+    uv run tools/smoke_test.py uvx --from tripsort==0.1.0 tripsort       # any command
 
 With no command, it runs ``python -m tripsort`` with this interpreter.
 """

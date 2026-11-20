@@ -25,3 +25,4 @@ member_min_similarity = 0.3        # a clustered face less like the person's ave
 attach_min_similarity = 0.5        # an unclustered foreground face joins the most similar person if this close
 ref_min_similarity = 0.5           # a refs/ photo names the most similar person if at least this close
 background_min_similarity = 0.5    # a background face counts for a named person if at least this close
+suggest_min_similarity = 0.6       # suggest merging an unnamed person into a named one this close (never automatic)

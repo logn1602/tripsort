@@ -12,6 +12,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import fake_faces
 import pytest
 from fake_faces import MarkerFaceAnalyzer, face_photo
 from PIL import Image
@@ -263,6 +264,65 @@ def test_people_without_a_ref_are_left_unscored(
         assert result["people"]["micro"]["recall"] in (1.0, None)
     assert sum(r["people"]["other_predicted_people"] for r in results) >= 1
     assert sum(r["faces"]["solo_faces"] for r in results) == 4  # the solo photos of Zorblax
+
+
+def test_suggestions_are_scored_on_dev_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    marker_faces: MarkerFaceAnalyzer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Zorblax in two looks (0 and 3), quuxine (1), and a stranger like quuxine (5)."""
+    e = fake_faces.orthonormal([0, 1, 3, 5])
+    monkeypatch.setitem(fake_faces.VECTORS, 1, e[1])
+    monkeypatch.setitem(fake_faces.VECTORS, 3, 0.72 * e[0] + 0.694 * e[3])
+    monkeypatch.setitem(fake_faces.VECTORS, 5, 0.72 * e[1] + 0.694 * e[5])
+    root = tmp_path / "private"
+    for folder, people in zip(SECRET_FOLDERS, ((0, 3), (1, 5)), strict=True):
+        (root / folder).mkdir(parents=True)
+        for person in people:
+            for i in range(4):
+                face_photo([(person, 0.3, 0.2, 0.3)], seed=10 * person + i).save(
+                    root / folder / f"solo{person}_{i}.jpg"
+                )
+    monkeypatch.setenv("TRIPSORT_EVAL_DIR", str(root))
+    refs = tmp_path / "refs"
+    refs.mkdir()
+    face_photo([(0, 0.3, 0.2, 0.5)], seed=40).save(refs / "Zorblax.jpg")
+    face_photo([(1, 0.3, 0.2, 0.5)], seed=41).save(refs / "quuxine.jpg")
+    work = tmp_path / "work"
+    run(capsys, "prelabel", "--work", work, "--refs", refs)
+    label_everything(root, {"0": "Zorblax", "3": "Zorblax", "1": "quuxine", "5": ""})
+    path = root / "labels.csv"
+    with path.open(encoding="utf-8-sig", newline="") as fp:
+        rows = [{**r, "split": "dev"} for r in csv.DictReader(fp)]  # every row in dev
+    with path.open("w", encoding="utf-8", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=list(labels_module.COLUMNS))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    code, out = run(capsys, "people", "--work", work, "--refs", refs)
+    assert code == 0
+    result = json.loads(out)
+    assert result["people"]["micro"] == {"precision": 1.0, "recall": 0.6667}  # one look missed
+    found = result["suggestions"]
+    assert (found["shown"], found["with_two_candidates"], found["confirmed"]) == (2, 0, 1)
+    scored = sorted(
+        (c["named"], c["right"], c["wrong"], c["confirmed"]) for c in found["candidates"]
+    )
+    assert scored == [("p1", 4, 0, True), ("p2", 0, 4, False)]  # the stranger is not quuxine
+    assert all(0.65 < c["similarity"] < 0.8 for c in found["candidates"])
+    confirmed, everything = found["after_accepting_confirmed"], found["after_accepting_all"]
+    assert (confirmed["merged"], confirmed["micro"]) == (1, {"precision": 1.0, "recall": 1.0})
+    assert (everything["merged"], everything["micro"]) == (2, {"precision": 0.75, "recall": 1.0})
+    by_person = {p["person"]: p["precision"] for p in everything["per_person"]}
+    assert by_person == {"p1": 1.0, "p2": 0.5}  # what accepting blindly costs
+
+    code, out = run(capsys, "people", "--work", work, "--refs", refs, "--split", "test")
+    assert code == 0
+    empty = json.loads(out)  # no test rows, yet what to accept still comes from dev
+    assert empty["checked_rows"] == 0
+    assert empty["suggestions"]["confirmed"] == 1
 
 
 def page_data(root: Path) -> dict[str, Any]:

@@ -10,8 +10,10 @@
 The labeled set is the folder named by ``TRIPSORT_EVAL_DIR`` (see eval/datasets.py).
 ``prelabel`` writes labels.csv (unless it exists), filled with tripsort's guesses, and
 labels.html, a click-to-label page for it, into that folder (see eval/labels_page.py);
-``people`` scores the checked rows of labels.csv. With ``--refs``,
-both also check that no ref photo is a copy of a labeled photo (see eval/ref_copies.py).
+``people`` scores the checked rows of labels.csv, and the merge suggestions: how many the
+dev rows confirm, and the scores after accepting the confirmed ones or all of them. With
+``--refs``, both also check that no ref photo is a copy of a labeled photo (see
+eval/ref_copies.py).
 ``--work`` keeps the zips and the index between runs, so a run after the first only analyzes.
 
 Only numbers are printed and saved: no file names, no image data, and people appear as p1,
@@ -54,6 +56,7 @@ from metrics import (  # the sibling module, importable once the path is set
 )
 from people_metrics import (
     Photo,
+    aliases,
     category_counts,
     face_report,
     people_report,
@@ -67,6 +70,7 @@ from tripsort import __version__
 from tripsort.api import Project
 from tripsort.faces.names import display_name
 from tripsort.faces.people import RefsResult
+from tripsort.faces.suggest import Suggestion
 from tripsort.faces.types import FACE_MODEL_ID
 from tripsort.index.db import transaction
 from tripsort.ingest.decode import UnreadableImageError, decode_oriented
@@ -429,8 +433,7 @@ def evaluate_people(
         refs_report = _refs_report(project, refs, named)
         files, kept = predictions(project, sources)
         settings = asdict(project.config.people)
-    photos = []
-    not_found = 0
+        suggestions = project.people.suggestions()
     # The labeled people: anyone named in a checked row, of either split, and every ref name,
     # even one no checked row lists (the labeler lists them in every row they are in).
     everyone: Counter[str] = Counter(
@@ -441,10 +444,36 @@ def evaluate_people(
     without_ref = len(set(everyone) - ref_keys) if named is not None else None
     for key in ref_keys:
         everyone.setdefault(key, 0)
+    photos, checked, not_found = _scored_photos(rows, split, files, kept)
+    return {
+        "tripsort_version": __version__,
+        "split": split,
+        "checked_rows": checked,
+        "rows_not_found": not_found,
+        **refs_report,
+        "labeled_names_without_a_ref": without_ref,
+        "settings": settings,
+        "people": people_report(photos, everyone),
+        "shots": shot_report(photos),
+        "faces": face_report(photos),
+        "categories_labeled": category_counts(photos),
+        "suggestions": evaluate_suggestions(
+            (root, work, refs, overrides), split, rows, files, kept, suggestions, everyone
+        ),
+        "seconds": round(time.perf_counter() - started, 1),
+    }
+
+
+def _scored_photos(
+    rows: list[Row], split: str, files: dict[str, int], kept: dict[int, Prediction]
+) -> tuple[list[Photo], int, int]:
+    """The checked rows of ``split`` with tripsort's guesses: (photos, checked rows, rows
+    whose photo was not found)."""
+    photos = []
+    not_found = 0
     checked = [r for r in rows if r.checked and r.split == split]
     for row in checked:
-        media_id = files.get(row.file)
-        guess = kept.get(media_id) if media_id is not None else None
+        guess = _guess(row, files, kept)
         if guess is None:
             not_found += 1
             continue
@@ -462,19 +491,103 @@ def evaluate_people(
                 category=row.category,
             )
         )
+    return photos, len(checked), not_found
+
+
+def _guess(row: Row, files: dict[str, int], kept: dict[int, Prediction]) -> Prediction | None:
+    media_id = files.get(row.file)
+    return kept.get(media_id) if media_id is not None else None
+
+
+# (labeled set folder, work folder, refs folder, settings): what it takes to start over
+Setup = tuple[Path, Path, Path | None, dict[str, str]]
+
+
+def evaluate_suggestions(
+    setup: Setup,
+    split: str,
+    rows: list[Row],
+    files: dict[str, int],
+    kept: dict[int, Prediction],
+    suggestions: list[Suggestion],
+    everyone: Counter[str],
+) -> dict[str, Any]:
+    """How the merge suggestions fare. For each candidate, the dev photos of the person
+    suggested that list the named person (right) or not (wrong). These always come from the
+    dev rows, whichever split is scored, so the choice of what to accept never looks at the
+    test half. A candidate is confirmed when it has right photos and no wrong one.
+
+    Then the split's scores after merging, from a fresh clustering each time: the confirmed
+    candidates (a user who checks every suggestion and is always right), and every
+    suggestion's first candidate (a user who accepts them all without looking)."""
+    alias = aliases(everyone)
+    dev = [(r, g) for r in rows if r.checked and r.split == "dev" if (g := _guess(r, files, kept))]
+    listed: list[dict[str, Any]] = []
+    confirmed: list[tuple[str, str]] = []
+    blind: list[tuple[str, str]] = []
+    for suggestion in suggestions:
+        own = [r for r, guess in dev if suggestion.person in guess.people]
+        chosen = None
+        for rank, candidate in enumerate(suggestion.candidates, 1):
+            key = person_key(candidate.name)
+            right = sum(1 for r in own if key in {person_key(n) for n in r.people})
+            ok = right > 0 and right == len(own)
+            listed.append(
+                {
+                    "named": alias.get(key, "not labeled"),
+                    "rank": rank,
+                    "similarity": round(candidate.similarity, 3),
+                    "photos": suggestion.photos,
+                    "dev_photos": len(own),
+                    "right": right,
+                    "wrong": len(own) - right,
+                    "confirmed": ok,
+                }
+            )
+            if ok and chosen is None:
+                chosen = candidate.name
+        if chosen is not None:
+            confirmed.append((suggestion.person, chosen))
+        blind.append((suggestion.person, suggestion.candidates[0].name))
+    report: dict[str, Any] = {
+        "shown": len(suggestions),
+        "with_two_candidates": sum(len(s.candidates) > 1 for s in suggestions),
+        "confirmed": len(confirmed),
+        "candidates": listed,
+    }
+    if suggestions:
+        for name, merges in (("confirmed", confirmed), ("all", blind)):
+            report[f"after_accepting_{name}"] = _after_merging(setup, split, rows, everyone, merges)
+    return report
+
+
+def _after_merging(
+    setup: Setup,
+    split: str,
+    rows: list[Row],
+    everyone: Counter[str],
+    merges: list[tuple[str, str]],
+) -> dict[str, Any]:
+    """The scores of ``split`` after merging each (person_NN, name) pair into the named
+    person, starting again from the clustering a fresh project gets."""
+    project, sources, _ = people_project(*setup)
+    with project:
+        shown = {(s.person, c.name) for s in project.people.suggestions() for c in s.candidates}
+        merged = 0
+        for person, name in merges:
+            if (person, name) in shown:  # the same clustering gives the same suggestions
+                project.people.merge(person, name)
+                merged += 1
+        project.analyze()
+        files, kept = predictions(project, sources)
+    photos, _, _ = _scored_photos(rows, split, files, kept)
+    people = people_report(photos, everyone)
     return {
-        "tripsort_version": __version__,
-        "split": split,
-        "checked_rows": len(checked),
-        "rows_not_found": not_found,
-        **refs_report,
-        "labeled_names_without_a_ref": without_ref,
-        "settings": settings,
-        "people": people_report(photos, everyone),
-        "shots": shot_report(photos),
+        "merged": merged,
+        "micro": people["micro"],
+        "macro": people["macro"],
+        "per_person": people["per_person"],
         "faces": face_report(photos),
-        "categories_labeled": category_counts(photos),
-        "seconds": round(time.perf_counter() - started, 1),
     }
 
 

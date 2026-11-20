@@ -34,8 +34,29 @@ def marker_color(person: int) -> tuple[int, int, int]:
     return round(r * 255), round(g * 255), round(b * 255)
 
 
-def person_vector(person: int) -> np.ndarray:
+# A test can give a person a chosen embedding (monkeypatch.setitem), such as a second look of
+# a friend, from the orthonormal vectors below.
+VECTORS: dict[int, np.ndarray] = {}
+
+
+def _random_vector(person: int) -> np.ndarray:
     return normalized(np.random.default_rng(1000 + person).normal(size=128))
+
+
+def person_vector(person: int) -> np.ndarray:
+    return VECTORS[person] if person in VECTORS else _random_vector(person)
+
+
+def orthonormal(people: list[int]) -> dict[int, np.ndarray]:
+    """The people's random vectors made exactly orthogonal, in order (Gram-Schmidt), so the
+    first keeps its own vector and ``0.72 * e[a] + 0.694 * e[b]`` is 0.72 similar to ``a``."""
+    basis: dict[int, np.ndarray] = {}
+    for person in people:
+        vector = _random_vector(person).astype(np.float64)
+        for other in basis.values():
+            vector = vector - (vector @ other) * other
+        basis[person] = vector / np.linalg.norm(vector)
+    return basis
 
 
 class MarkerFaceAnalyzer:

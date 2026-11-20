@@ -1,9 +1,11 @@
 """People end to end, with the marker face analyzer (see fake_faces.py) instead of the models."""
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
+import fake_faces
 import pytest
 from factories import camera_exif, jpeg, make_zip, whatsapp_copy
 from fake_faces import MarkerFaceAnalyzer, face_photo
@@ -13,6 +15,8 @@ import tripsort.faces.analyzer
 from tripsort.api import Project
 from tripsort.cli import app
 from tripsort.errors import ModelError, PeopleError, UserError
+from tripsort.faces.names import display_name
+from tripsort.faces.suggest import shell_arg
 
 runner = CliRunner()
 FRONT = camera_exif(lens="iPhone 15 front camera 2.69mm f/1.9", make="Apple", model="iPhone 15")
@@ -470,3 +474,175 @@ def test_refs_problems_are_reported(
     assert project.people.get("sam").photos == 5
     with pytest.raises(UserError, match="no such folder"):
         project.people.name_from_refs(tmp_path / "missing")
+
+
+# merge suggestions
+
+
+@pytest.fixture
+def second_look(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Person 4 is a second look of person 1 (0.72 similar, as sunglasses might make it),
+    and person 6 looks about as much like person 1 (0.68) as like person 2 (0.66)."""
+    e = fake_faces.orthonormal([1, 2, 4, 6])
+    monkeypatch.setitem(fake_faces.VECTORS, 2, e[2])
+    monkeypatch.setitem(fake_faces.VECTORS, 4, 0.72 * e[1] + 0.694 * e[4])
+    monkeypatch.setitem(fake_faces.VECTORS, 6, 0.68 * e[1] + 0.66 * e[2] + 0.319 * e[6])
+
+
+def solos(tmp_path: Path, name: str, people: dict[int, int], seed: int) -> Path:
+    """A zip with the given number of solo photos of each person."""
+    entries = []
+    for person, photos in people.items():
+        for _ in range(photos):
+            entries.append((f"{name}{seed}.jpg", solo(person, seed)))
+            seed += 1
+    return make_zip(tmp_path / "in" / f"{name}.zip", entries)
+
+
+def refs_of(tmp_path: Path, people: dict[str, int]) -> Path:
+    refs = tmp_path / "refs"
+    refs.mkdir(exist_ok=True)
+    for i, (name, person) in enumerate(people.items()):
+        face_photo([(person, 0.3, 0.2, 0.5)], seed=900 + i).save(refs / f"{name}.jpg")
+    return refs
+
+
+def unnamed(project: Project) -> str:
+    (name,) = [p.name for p in project.people.all() if p.named_by is None]
+    return name
+
+
+def suggestion_section(page: str) -> str:
+    """The first suggestion on a review page, up to the people sections."""
+    return page.split("<h3>")[1].split("<h2>")[0]
+
+
+def test_a_friend_split_in_two_is_suggested_not_merged(
+    project: Project, marker_faces: MarkerFaceAnalyzer, second_look: None, tmp_path: Path
+) -> None:
+    project.ingest([solos(tmp_path, "t", {1: 5, 4: 5, 2: 5}, 100)])
+    named = project.people.name_from_refs(refs_of(tmp_path, {"sam": 1, "kim": 2}))
+    split = unnamed(project)
+    (suggestion,) = named.analysis.people.suggestions
+    assert (suggestion.person, suggestion.photos) == (split, 5)
+    assert [c.name for c in suggestion.candidates] == ["sam"]
+    assert 0.65 < suggestion.candidates[0].similarity < 0.8
+    assert project.people.get("sam").photos == 5  # nothing was merged
+    assert project.people.suggestions() == [suggestion]
+
+    summary = named.analysis.summary(project="sorted")
+    assert f"  {split} (5 photos) may be sam (similarity 0.7" in summary
+    assert f"    merge:   tripsort people merge sorted {split} sam" in summary
+    assert f"    dismiss: tripsort people dismiss sorted {split} sam" in summary
+    assert shell_arg(str(project.folder)) in named.analysis.summary()  # the full path
+
+    page = project.people.review(project="sorted").read_text(encoding="utf-8")
+    section = suggestion_section(page)
+    assert f"{split} may be sam" in section
+    assert f"tripsort people dismiss sorted {split} sam" in section
+    captions = [float(c) for c in re.findall(r"<figcaption>([0-9.]+)</figcaption>", section)]
+    assert len(captions) == 5 + 5  # every face of the person suggested, then the named one
+    assert captions[:5] == sorted(captions[:5])  # least like sam first
+    assert max(captions[:5]) < 0.8 < min(captions[5:])
+
+
+def test_a_dismissed_suggestion_stays_dismissed(
+    project: Project, marker_faces: MarkerFaceAnalyzer, second_look: None, tmp_path: Path
+) -> None:
+    project.ingest([solos(tmp_path, "t", {1: 5, 4: 5, 2: 5}, 100)])
+    project.people.name_from_refs(refs_of(tmp_path, {"sam": 1, "kim": 2}))
+    split = unnamed(project)
+    first, second = project.people.dismiss(split, "sam")
+    assert (first.name, second.name) == (split, "sam")
+    assert project.people.suggestions() == []
+    pinned = {
+        display_name(int(number), name): int(pin)
+        for number, name, pin in project.connection.execute(
+            "SELECT number, name, pinned FROM people"
+        )
+    }
+    assert (pinned[split], pinned["sam"], pinned["kim"]) == (1, 1, 0)  # pinned, as by a merge
+
+    project.ingest([solos(tmp_path, "more", {4: 2, 1: 1}, 200)])
+    again = project.analyze()
+    assert again.people.suggestions == []
+    assert project.people.get(split).photos == 7  # the same person, with two more photos
+    assert project.people.get("sam").photos == 6
+    project.people.dismiss("sam", split)  # again, and in the other order: no change
+    assert (
+        project.connection.execute("SELECT COUNT(*) FROM dismissed_suggestions").fetchone()[0] == 1
+    )
+    with pytest.raises(PeopleError, match="from themselves"):
+        project.people.dismiss("sam", "Sam")
+
+
+def test_merging_a_suggestion_ends_it(
+    project: Project, marker_faces: MarkerFaceAnalyzer, second_look: None, tmp_path: Path
+) -> None:
+    project.ingest([solos(tmp_path, "t", {1: 5, 4: 5, 2: 5}, 100)])
+    project.people.name_from_refs(refs_of(tmp_path, {"sam": 1, "kim": 2}))
+    split = unnamed(project)
+    project.people.dismiss(split, "kim")  # a pair that goes away with the merge
+    assert project.people.merge(split, "sam").photos == 10
+    assert project.people.suggestions() == []
+    assert (
+        project.connection.execute("SELECT COUNT(*) FROM dismissed_suggestions").fetchone()[0] == 0
+    )
+
+
+def test_a_close_second_is_suggested_too(
+    project: Project, marker_faces: MarkerFaceAnalyzer, second_look: None, tmp_path: Path
+) -> None:
+    project.ingest([solos(tmp_path, "t", {1: 5, 2: 5, 6: 5}, 300)])
+    named = project.people.name_from_refs(refs_of(tmp_path, {"sam": 1, "kim": 2}))
+    split = unnamed(project)
+    (suggestion,) = project.people.suggestions()
+    assert [c.name for c in suggestion.candidates] == ["sam", "kim"]
+    summary = named.analysis.summary(project="sorted")
+    assert f"{split} (5 photos) may be sam (similarity 0.6" in summary
+    assert ") or kim (similarity 0.6" in summary
+    for action in ("merge", "dismiss"):
+        for name in ("sam", "kim"):
+            assert f"tripsort people {action} sorted {split} {name}" in summary
+    section = suggestion_section(project.people.review().read_text(encoding="utf-8"))
+    pairs = re.findall(r"<figcaption>([0-9.]+) / ([0-9.]+)</figcaption>", section)
+    assert len(pairs) == 5  # every face, with its similarity to sam and to kim
+    project.people.dismiss(split, "sam")
+    (left,) = project.people.suggestions()
+    assert [c.name for c in left.candidates] == ["kim"]
+
+
+def test_people_seen_together_are_not_suggested(
+    project: Project, marker_faces: MarkerFaceAnalyzer, second_look: None, tmp_path: Path
+) -> None:
+    trip = solos(tmp_path, "t", {1: 5, 4: 5}, 100)
+    together = make_zip(tmp_path / "in" / "together.zip", [("g.jpg", group([1, 4], 150))])
+    project.ingest([trip, together])
+    project.people.name_from_refs(refs_of(tmp_path, {"sam": 1}))
+    assert project.people.get(unnamed(project)).photos == 6
+    assert project.people.suggestions() == []  # two faces in one photo are two people
+
+
+def test_suggestion_commands(
+    marker_faces: MarkerFaceAnalyzer, second_look: None, tmp_path: Path
+) -> None:
+    trip = solos(tmp_path, "t", {1: 5, 4: 5, 2: 5}, 100)
+    refs = refs_of(tmp_path, {"sam": 1, "kim": 2})
+    out = tmp_path / "sorted"
+    ran = invoke("run", trip, "-o", out, "--refs", refs)
+    assert ran.exit_code == 0
+    with Project.open(out) as project:
+        split = unnamed(project)
+    merge = f"tripsort people merge {shell_arg(str(out))} {split} sam"
+    assert "Maybe the same person (1 suggestion)" in ran.output
+    assert merge in ran.output
+
+    listed = invoke("people", "list", out)
+    assert listed.exit_code == 0
+    assert merge in listed.output
+    dismissed = invoke("people", "dismiss", out, split, "sam")
+    assert dismissed.exit_code == 0
+    assert f"Keeping {split} and sam apart" in dismissed.output
+    assert "Maybe the same person" not in invoke("people", "list", out).output
+    assert invoke("people", "dismiss", out, "sam", "sam").exit_code == 1
+    assert invoke("people", "dismiss", out, "person_99", "sam").exit_code == 1

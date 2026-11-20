@@ -1,7 +1,9 @@
-"""The people API: list people, rename and merge them, name them from refs/, review them.
+"""The people API: list people, rename and merge them, name them from refs/, review them,
+and see or dismiss merge suggestions.
 
-Renames and merges are stored in the index and pin the person: the next analysis keeps
-them, so an export after a rename only moves links and reads no pixels.
+Renames, merges, and dismissed suggestions are stored in the index and pin the people
+involved: the next analysis keeps them, so an export after a rename only moves links and
+reads no pixels.
 """
 
 import os
@@ -13,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from tripsort.errors import PeopleError
 from tripsort.faces.names import check_name, display_name, name_key
+from tripsort.faces.suggest import Suggestion, suggest_merges
 from tripsort.index.db import transaction
 from tripsort.progress import Progress
 
@@ -123,6 +126,30 @@ class People:
             self._project._people_edited()
         return self._infos(int(target["id"]))[0]
 
+    def suggestions(self) -> list[Suggestion]:
+        """Unnamed people who may be a named person split in two, most similar first. Nothing
+        is merged: ``merge`` the ones that are, and ``dismiss`` the others."""
+        self._fresh()
+        return suggest_merges(self._conn, self._project.config.people.suggest_min_similarity)
+
+    def dismiss(self, person: str, other: str) -> tuple[PersonInfo, PersonInfo]:
+        """Say ``person`` and ``other`` are two people: merging them is never suggested again.
+        Both are pinned, as a merge pins, so later clusterings keep them apart."""
+        self._fresh()
+        with transaction(self._conn):
+            first = self._find(person)
+            second = self._find(other)
+            if first["id"] == second["id"]:
+                raise PeopleError("a person cannot be kept apart from themselves")
+            low, high = sorted((int(first["id"]), int(second["id"])))
+            self._conn.execute(
+                "INSERT OR IGNORE INTO dismissed_suggestions (person_id, other_id) VALUES (?, ?)",
+                (low, high),
+            )
+            self._conn.execute("UPDATE people SET pinned = 1 WHERE id IN (?, ?)", (low, high))
+            self._project._people_edited()
+        return self._infos(int(first["id"]))[0], self._infos(int(second["id"]))[0]
+
     def name_from_refs(self, folder: str | os.PathLike[str]) -> RefsResult:
         """Name people from ``folder`` (``<name>.jpg`` or ``<name>/*.jpg``), then analyze.
 
@@ -158,18 +185,23 @@ class People:
         per_person: int = 24,
         unassigned: int = 120,
         progress: Progress | None = None,
+        project: str | None = None,
     ) -> Path:
-        """Write ``review/people.html``: sample face crops per person, read back from the
-        zips, plus faces that belong to nobody. Returns the page's path."""
+        """Write ``review/people.html``: the merge suggestions with every face of the person
+        suggested, sample face crops per person, read back from the zips, and faces that
+        belong to nobody. ``project`` is how the page's commands name the project folder
+        (default: its full path). Returns the page's path."""
         from tripsort.faces.review import write_review
 
-        self._fresh()
+        suggestions = self.suggestions()
         return write_review(
             self._conn,
             self._project.folder,
             per_person=per_person,
             unassigned=unassigned,
             progress=progress,
+            suggestions=suggestions,
+            project=project if project is not None else str(self._project.folder),
         )
 
     def _fresh(self) -> None:

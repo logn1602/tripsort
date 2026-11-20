@@ -2,7 +2,7 @@
 
 Offline Python library + CLI that merges trip photo zips, removes duplicates, and sorts photos by person, shot type, and category.
 
-> **Status: alpha (0.1.0a2).** This pre-release reads your zips, removes exact duplicates and
+> **Status: alpha (0.1.0).** This version reads your zips, removes exact duplicates and
 > recompressed copies (such as WhatsApp copies), finds everyone's faces, and exports one clean
 > folder plus a folder per person and per shot type (solo, group, selfie), with a
 > `manifest.json`. Sorting by category and culling bursts come in later releases.
@@ -25,13 +25,13 @@ Everything runs locally on an ordinary laptop CPU: no account, no cloud uploads,
 
 ## Install
 
-Requires Python 3.11 or newer. 0.1.0a2 is a pre-release, so ask for it by version:
+Requires Python 3.11 or newer.
 
 ```console
-uvx tripsort@0.1.0a2 --version
+pip install tripsort
 ```
 
-or `pip install --pre tripsort`.
+Or run it without installing, with uv: `uvx tripsort --version`.
 
 ## Usage
 
@@ -65,7 +65,7 @@ The steps can also run one at a time:
 tripsort ingest  sorted/ mine.zip sam.zip    # read the zips, decode each new file once
 tripsort analyze sorted/ [--refs refs/]      # dates, duplicates, people: the index only
 tripsort export  sorted/ [--dry-run] [--export-duplicates] [--copy]
-tripsort people  list|review|rename|merge sorted/ ...
+tripsort people  list|review|rename|merge|dismiss sorted/ ...
 tripsort models  list|download               # the face models (downloaded on first use)
 tripsort clean   sorted/                     # delete the index and review pages, keep the export
 ```
@@ -81,7 +81,10 @@ with Project.open("sorted/") as proj:
     proj.ingest(["mine.zip", "sam.zip"])
     proj.people.name_from_refs("refs/")  # refs/<name>.jpg; analyzes too
     proj.people.rename("person_03", "alex")
+    for s in proj.people.suggestions():  # unnamed people who may be someone named
+        print(s.person, [(c.name, c.similarity) for c in s.candidates])
     proj.people.merge("person_07", into="alex")
+    proj.people.dismiss("person_09", "alex")  # not alex: stop suggesting it
     result = proj.export(hardlinks=True, dry_run=False)
     print(result.summary())
 ```
@@ -128,18 +131,29 @@ person_02, and so on, most photos first.
 - **Names.** Put one clear photo of each friend in a folder, `refs/<name>.jpg` (or several in
   `refs/<name>/`), and pass `--refs refs/`. Each name goes to the most similar person, if
   similar enough; the photos stay in the index for later runs until the next `--refs`.
-- **Fixes.** `tripsort people list sorted/` shows everyone. `tripsort people review sorted/`
-  writes `review/people.html`, a grid of face crops per person from most to least alike,
-  plus faces that matched nobody. Then:
+- **Merge suggestions.** A friend can come out as two people, for example with and without
+  sunglasses, and a ref names only one of them. When an unnamed person's average face is at
+  least `suggest_min_similarity` (0.6) similar to a named person's, and the two never appear
+  in the same photo, the summary and `tripsort people list` suggest the merge, with the
+  exact commands to merge or dismiss it. When a second named person is nearly as similar
+  (within 0.05), both are shown. tripsort never merges on its own: on a labeled trip,
+  strangers who looked like a friend were as close to the friend's average face as the
+  friend's own second cluster, so check `tripsort people review` first. A dismissed
+  suggestion is not shown again, and the two people are kept apart from then on.
+- **Fixes.** `tripsort people list sorted/` shows everyone and the suggested merges.
+  `tripsort people review sorted/` writes `review/people.html`: each suggestion with every
+  face of the person suggested, least like the named person first, then a grid of face
+  crops per person from most to least alike, plus faces that matched nobody. Then:
 
   ```console
-  tripsort people rename sorted/ person_03 alex     # name someone, or rename them
-  tripsort people merge  sorted/ person_07 alex     # one friend split in two (sunglasses)
-  tripsort export        sorted/                    # moves the links; reads no pixels
+  tripsort people rename  sorted/ person_03 alex    # name someone, or rename them
+  tripsort people merge   sorted/ person_07 alex    # one friend split in two (sunglasses)
+  tripsort people dismiss sorted/ person_09 alex    # not alex: keep them apart
+  tripsort export         sorted/                   # moves the links; reads no pixels
   ```
 
-  Names and merges are kept when you add zips or change a setting: the faces remember
-  whose they are. Splitting a person in two is not possible yet.
+  Names, merges, and dismissed suggestions are kept when you add zips or change a setting:
+  the faces remember whose they are. Splitting a person in two is not possible yet.
 - **Friends in the background.** A named friend's face in the background (a smaller face
   behind someone) still puts the photo in their folder, under a stricter similarity, but
   never changes the shot type.
@@ -216,6 +230,7 @@ foreground_min_height = 0.03     # and at least this share of the image height
 cluster_method = "hdbscan"       # or "agglomerative"
 min_cluster_size = 4             # fewer faces than this never form a person
 ref_min_similarity = 0.5         # a refs/ photo names the most similar person if this close
+suggest_min_similarity = 0.6     # suggest merging an unnamed person into a named one this close
 ```
 
 For a small trip where a friend is in only 3 photos, set `min_cluster_size = 3`. Raising
@@ -306,7 +321,12 @@ completeness from solo photos of labeled people: tune on `dev`, report `test` on
 name in `REFS` is a labeled person, even one no checked row lists, so tripsort putting it
 on a checked photo that does not list it is a wrong photo; `labeled_names_without_a_ref`
 counts names in the rows that match no ref, usually a typo. Other people tripsort finds are
-counted but not scored. Both commands also check that no ref photo is a copy of a labeled
+counted but not scored. `people` also scores the merge suggestions: for each one, how many
+of the suggested person's `dev` photos list the named person, which confirms it when all of
+them do; then the split's scores after merging the confirmed suggestions (a user who
+checks each one) and after merging every suggestion (a user who accepts them all). Which
+suggestions count as confirmed always comes from the `dev` rows, even when scoring `test`.
+Both commands also check that no ref photo is a copy of a labeled
 photo (the same file, a near copy by pHash, or nearly the same face) and print the counts,
 giving any flagged photo by position. Only numbers are printed, with people shown as p1,
 p2, ...; `WORK` keeps the index between runs, so later runs only analyze. Delete `WORK`

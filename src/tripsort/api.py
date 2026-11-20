@@ -7,7 +7,9 @@ with Project.open("sorted/") as proj:          # creates sorted/.tripsort/index.
     proj.people.name_from_refs("refs/")        # refs/<name>.jpg
     proj.analyze()                             # dates, dedupe, people: queries only
     proj.people.rename("person_03", "alex")
+    proj.people.suggestions()                  # unnamed people who may be someone named
     proj.people.merge("person_07", into="alex")
+    proj.people.dismiss("person_09", "alex")   # not alex: stop suggesting it
     result = proj.export(hardlinks=True)       # all/, people/, shots/, manifest.json
     print(result.summary())
 """
@@ -36,6 +38,7 @@ from tripsort.faces.analysis import PeopleStats
 from tripsort.faces.people import People, PersonInfo, RefsResult
 from tripsort.faces.review import REVIEW_DIR
 from tripsort.faces.store import pending_scans
+from tripsort.faces.suggest import Suggestion, suggestion_lines
 from tripsort.faces.types import FACE_MODEL_ID, FaceAnalyzer
 from tripsort.index.db import (
     INDEX_DIR_NAME,
@@ -60,10 +63,13 @@ __all__ = [
     "Project",
     "ProjectStats",
     "RefsResult",
+    "Suggestion",
     "clean",
 ]
 
-PEOPLE_EDITS_KEY = "people_edits"  # bumped by rename and merge, so the next export re-analyzes
+# bumped by rename, merge, and dismiss, so the next export re-analyzes
+PEOPLE_EDITS_KEY = "people_edits"
+SUMMARY_SUGGESTIONS = 5  # merge suggestions in a summary; `people list` shows them all
 
 
 @dataclass
@@ -73,8 +79,13 @@ class AnalyzeResult:
     people: PeopleStats = field(default_factory=PeopleStats)
     seconds: float = 0.0
     peak_rss_bytes: int | None = None
+    folder: Path | None = None  # the project folder
 
-    def summary(self) -> str:
+    def summary(self, project: str | None = None) -> str:
+        """The summary. ``project`` is how its commands name the project folder, such as the
+        path the user typed (default: the folder's full path)."""
+        if project is None:
+            project = str(self.folder) if self.folder is not None else "PROJECT"
         s = self.stats
         lines = [
             f"{count(s.files_found, 'file')} in {count(s.sources, 'zip')}: {s.unique:,} unique, "
@@ -101,11 +112,11 @@ class AnalyzeResult:
                 f"{count(s.read_failures, 'zip entry', 'zip entries')} could not be read "
                 "(see the messages above and manifest.json)."
             )
-        lines.extend(_people_lines(self.people))
+        lines.extend(_people_lines(self.people, project))
         return "\n".join(lines)
 
 
-def _people_lines(p: PeopleStats) -> list[str]:
+def _people_lines(p: PeopleStats, project: str) -> list[str]:
     lines = []
     if p.people or p.foreground_faces:
         named = f" ({p.named:,} named)" if p.named else ""
@@ -126,6 +137,7 @@ def _people_lines(p: PeopleStats) -> list[str]:
         )
     if p.refs_unmatched:
         lines.append(f"No one looks enough like the refs/ photos of {', '.join(p.refs_unmatched)}.")
+    lines.extend(suggestion_lines(p.suggestions, project, SUMMARY_SUGGESTIONS))
     if p.not_scanned:
         lines.append(
             f"{count(p.not_scanned, 'photo')} not scanned for faces yet; "
@@ -214,7 +226,7 @@ class Project:
             stats = project_stats(self._conn)
             run.items = stats.unique
         return AnalyzeResult(
-            stats, dates, people, time.perf_counter() - started, run.peak_rss_bytes
+            stats, dates, people, time.perf_counter() - started, run.peak_rss_bytes, self.folder
         )
 
     def export(
@@ -280,8 +292,8 @@ class Project:
         return json.dumps({"config": self.config.hash, "counts": list(counts), "edits": edits})
 
     def _people_edited(self) -> None:
-        """Called after a rename or merge: the next export analyzes again (index only), so
-        background faces and names follow the edit."""
+        """Called after a rename, merge, or dismiss: the next export analyzes again (index
+        only), so background faces and names follow the edit."""
         edits = int(get_meta(self._conn, PEOPLE_EDITS_KEY) or "0")
         set_meta(self._conn, PEOPLE_EDITS_KEY, str(edits + 1))
 

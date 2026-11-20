@@ -1631,7 +1631,7 @@ wheels = [
 
 [[package]]
 name = "tripsort"
-version = "0.1.0a2"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "imagehash" },
