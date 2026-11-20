@@ -57,4 +57,5 @@ def normalized(vector: npt.NDArray[np.floating]) -> Embedding:
     """``vector`` as float32 with length 1 (a zero vector stays zero)."""
     out = np.asarray(vector, dtype=np.float32).reshape(-1)
     norm = float(np.linalg.norm(out))
-    return out / norm if norm > 0 else out
+    # float32 already at run time; said again because numpy's type stubs differ by version
+    return np.asarray(out / norm if norm > 0 else out, dtype=np.float32)
