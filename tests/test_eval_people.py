@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from fake_faces import MarkerFaceAnalyzer, face_photo
+from PIL import Image
 
 from eval import labels as labels_module
 from eval import people_metrics
@@ -50,7 +51,7 @@ def run(capsys: pytest.CaptureFixture[str], *args: str | Path) -> tuple[int, str
 def label_everything(root: Path, names: dict[str, str]) -> None:
     """Act as the labeler: check every row, with true people by file name prefix."""
     path = root / "labels.csv"
-    with path.open(encoding="utf-8", newline="") as fp:
+    with path.open(encoding="utf-8-sig", newline="") as fp:  # it may have been saved below
         rows = list(csv.DictReader(fp))
     for row in rows:
         stem = Path(row["file"]).stem
@@ -87,7 +88,7 @@ def test_prelabel_then_score(
         "written",
         0,
     )
-    assert (report["refs"], report["named_people"]) == (None, 0)
+    assert (report["refs"], report["ref_copies"], report["named_people"]) == (None, None, 0)
     page = (labeled_set / "labels.html").read_text(encoding="utf-8")
     assert page.count("class='card'") == 10
     assert page.count("data:image/jpeg;base64,") == 10
@@ -136,6 +137,8 @@ def test_refs_match_labels_by_name(
         "no_usable_photo": 0,
         "files_skipped": 0,
     }
+    copies = report["ref_copies"]
+    assert (copies["ref_photos"], copies["same_file"], copies["near_copy"]) == (2, 0, 0)
     assert report["named_people"] == 2
     with (labeled_set / "labels.csv").open(encoding="utf-8", newline="") as fp:
         guesses = {Path(r["file"]).stem: r["people"] for r in csv.DictReader(fp)}
@@ -153,7 +156,81 @@ def test_refs_match_labels_by_name(
     result = json.loads(out)
     assert result["people"]["matched_by_name"] == result["people"]["labeled_people"] > 0
     assert result["people"]["micro"] == {"precision": 1.0, "recall": 1.0}
+    assert result["labeled_names_without_a_ref"] == 0
+    assert result["ref_copies"]["same_file"] == 0
     assert json.loads(baseline.read_text(encoding="utf-8"))["people"]["t"] == result
+
+
+def test_refs_that_copy_a_labeled_photo_are_flagged(
+    labeled_set: Path,
+    marker_faces: MarkerFaceAnalyzer,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    refs = tmp_path / "refs"
+    (refs / "Zorblax").mkdir(parents=True)
+    photos = labeled_set / SECRET_FOLDERS[0]
+    (refs / "Zorblax" / "1.jpg").write_bytes((photos / "solo0_0.jpg").read_bytes())
+    with Image.open(photos / "solo0_1.jpg") as image:  # a smaller copy, saved again
+        image.resize((960, 720)).save(refs / "Zorblax" / "2.jpg", quality=80)
+    face_photo([(5, 0.3, 0.2, 0.5)], seed=42).save(refs / "quuxine.jpg")  # nobody in the set
+    code, out = run(capsys, "prelabel", "--work", tmp_path / "work", "--refs", refs)
+    assert code == 0
+    copies = json.loads(out)["ref_copies"]
+    assert (copies["ref_photos"], copies["same_file"], copies["near_copy"]) == (3, 1, 2)
+    assert (copies["closest_phash_distance"], copies["highest_face_similarity"]) == (0, 1.0)
+    # by position only: quuxine is the 1st name (ignoring case), Zorblax the 2nd
+    assert copies["flagged"] == [
+        {
+            "name_position": 2,
+            "photo_position": 1,
+            "photos_for_name": 2,
+            "why": ["same file", "near copy", "same face"],
+        },
+        {
+            "name_position": 2,
+            "photo_position": 2,
+            "photos_for_name": 2,
+            "why": ["near copy", "same face"],
+        },
+    ]
+
+
+def test_every_ref_name_is_a_labeled_person(
+    labeled_set: Path,
+    marker_faces: MarkerFaceAnalyzer,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    refs = tmp_path / "refs"
+    refs.mkdir()
+    face_photo([(0, 0.3, 0.2, 0.5)], seed=40).save(refs / "Zorblax.jpg")
+    face_photo([(1, 0.3, 0.2, 0.5)], seed=41).save(refs / "quuxine.jpg")
+    work = tmp_path / "work"
+    run(capsys, "prelabel", "--work", work, "--refs", refs)
+    label_everything(labeled_set, {"0": "Zorblax", "1": ""})  # no checked row lists quuxine
+    results = []
+    for split in ("dev", "test"):
+        code, out = run(capsys, "people", "--work", work, "--refs", refs, "--split", split)
+        assert code == 0
+        results.append(json.loads(out))
+    for result in results:
+        assert result["people"]["labeled_people"] == 2
+        assert result["people"]["other_predicted_people"] == 0
+        assert result["labeled_names_without_a_ref"] == 0
+    # tripsort names person 1 quuxine: each checked photo it puts quuxine on is a wrong photo
+    # (quuxine is p2 in both splits: no labeled photos, against Zorblax's 5)
+    quuxine = [p for r in results for p in r["people"]["per_person"] if p["person"] == "p2"]
+    assert [p["photos"] for p in quuxine] == [0, 0]
+    assert {p["precision"] for p in quuxine} - {None} == {0.0}
+    assert {p["recall"] for p in quuxine} == {None}
+
+    label_everything(labeled_set, {"0": "Zorblx", "1": ""})  # a typo: a name with no ref
+    code, out = run(capsys, "people", "--work", work, "--refs", refs)
+    assert code == 0
+    result = json.loads(out)
+    assert result["labeled_names_without_a_ref"] == 1
+    assert result["people"]["labeled_people"] == 3
 
 
 def test_people_without_a_ref_are_left_unscored(

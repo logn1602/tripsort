@@ -9,8 +9,9 @@
 
 The labeled set is the folder named by ``TRIPSORT_EVAL_DIR`` (see eval/datasets.py).
 ``prelabel`` writes labels.csv (unless it exists) and labels.html into that folder, filled
-with tripsort's guesses; ``people`` scores the checked rows of labels.csv. ``--work`` keeps
-the zips and the index between runs, so a run after the first only analyzes.
+with tripsort's guesses; ``people`` scores the checked rows of labels.csv. With ``--refs``,
+both also check that no ref photo is a copy of a labeled photo (see eval/ref_copies.py).
+``--work`` keeps the zips and the index between runs, so a run after the first only analyzes.
 
 Only numbers are printed and saved: no file names, no image data, and people appear as p1,
 p2, ... ``--write-baseline`` stores the numbers in eval/baseline.json.
@@ -58,6 +59,7 @@ from people_metrics import (
     solo_face,
 )
 from PIL import Image
+from ref_copies import ref_copies
 
 from tripsort import __version__
 from tripsort.api import Project
@@ -203,10 +205,10 @@ class Prediction:
 
 def people_project(
     root: Path, work: Path, refs: Path | None, overrides: dict[str, str]
-) -> tuple[Project, list[Source], dict[str, int] | None]:
+) -> tuple[Project, list[Source], RefsResult | None]:
     """Ingest the labeled set (once), then analyze from scratch: people from an earlier run
-    are forgotten, so every run clusters like a fresh project would. The third value counts
-    how the refs went (None without refs)."""
+    are forgotten, so every run clusters like a fresh project would. The third value is how
+    the refs went (None without refs); it names people and files, so never print it."""
     sources = build_sources(root, work / "zips")
     folder = work / "project"
     folder.mkdir(parents=True, exist_ok=True)
@@ -219,23 +221,32 @@ def people_project(
         conn.execute("DELETE FROM meta WHERE key IN ('next_person_number', 'analysis_state')")
         if refs is None:
             conn.execute("DELETE FROM ref_images")
-    ref_counts = None
     if refs is not None:
-        ref_counts = _ref_counts(project.people.name_from_refs(refs))
-    else:
-        project.analyze()
-    return project, sources, ref_counts
+        return project, sources, project.people.name_from_refs(refs)
+    project.analyze()
+    return project, sources, None
 
 
-def _ref_counts(result: RefsResult) -> dict[str, int]:
-    """How the refs went, in counts only: the result itself names people and files."""
-    states = Counter(result.names.values())
+def _refs_report(project: Project, refs: Path | None, named: RefsResult | None) -> dict[str, Any]:
+    """How the refs went, in counts only (``named`` itself names people and files), and
+    whether any ref photo is a copy of a labeled photo. Both None without refs."""
+    if refs is None or named is None:
+        return {"refs": None, "ref_copies": None}
+    states = Counter(named.names.values())
     return {
-        "names": len(result.names),
-        "named": states["named"],
-        "no_match": states["no match"],
-        "no_usable_photo": states["no usable photo"],
-        "files_skipped": len(result.problems),
+        "refs": {
+            "names": len(named.names),
+            "named": states["named"],
+            "no_match": states["no match"],
+            "no_usable_photo": states["no usable photo"],
+            "files_skipped": len(named.problems),
+        },
+        "ref_copies": ref_copies(
+            project.connection,
+            refs,
+            FACE_MODEL_ID,
+            project.config.thresholds.phash_max_distance,
+        ),
     }
 
 
@@ -327,8 +338,9 @@ def prelabel(
     force: bool = False,
 ) -> dict[str, Any]:
     """Write labels.csv (unless it exists) and labels.html into the labeled set's folder."""
-    project, sources, ref_counts = people_project(root, work, refs, overrides or {})
+    project, sources, named = people_project(root, work, refs, overrides or {})
     with project:
+        refs_report = _refs_report(project, refs, named)
         files, kept = predictions(project, sources)
         csv_path = root / LABELS_CSV
         if csv_path.exists() and not force:
@@ -371,7 +383,7 @@ def prelabel(
         "checked": sum(r.checked for r in rows),
         "label_problems": len(problems),
         "rows_without_photo": missing,
-        "refs": ref_counts,
+        **refs_report,
         "people_found": len(people_found),
         "named_people": len(named_found),
         "photos_with_people": sum(bool(p.people) for p in kept.values()),
@@ -388,16 +400,23 @@ def evaluate_people(
     rows, problems = read_rows(root / LABELS_CSV)
     if problems:  # row numbers and column names only
         return {"label_problems": len(problems), "first_problems": problems[:20]}
-    project, sources, ref_counts = people_project(root, work, refs, overrides)
+    project, sources, named = people_project(root, work, refs, overrides)
     with project:
+        refs_report = _refs_report(project, refs, named)
         files, kept = predictions(project, sources)
         settings = asdict(project.config.people)
     photos = []
     not_found = 0
-    # the labeled people are whoever is named in any checked row, of either split
+    # The labeled people: anyone named in a checked row, of either split, and every ref name,
+    # even one no checked row lists (the labeler lists them in every row they are in).
     everyone: Counter[str] = Counter(
         key for r in rows if r.checked for key in {person_key(n) for n in r.people}
     )
+    ref_keys = {person_key(name) for name in named.names} if named is not None else set()
+    # with refs, a name in the rows that matches no ref is most likely a typo
+    without_ref = len(set(everyone) - ref_keys) if named is not None else None
+    for key in ref_keys:
+        everyone.setdefault(key, 0)
     checked = [r for r in rows if r.checked and r.split == split]
     for row in checked:
         media_id = files.get(row.file)
@@ -424,7 +443,8 @@ def evaluate_people(
         "split": split,
         "checked_rows": len(checked),
         "rows_not_found": not_found,
-        "refs": ref_counts,
+        **refs_report,
+        "labeled_names_without_a_ref": without_ref,
         "settings": settings,
         "people": people_report(photos, everyone),
         "shots": shot_report(photos),

@@ -293,10 +293,15 @@ overwrites a `labels.csv` without `--force`. Only the people in `REFS` are label
 everyone else out. The shot type counts everyone. Fix the wrong rows and mark the reviewed
 ones `checked`. `people` then prints, for the checked rows of one split, precision and
 recall for each labeled person, shot-type accuracy, and face-level homogeneity and
-completeness from solo photos of labeled people: tune on `dev`, report `test` once. Other
-people tripsort finds are counted but not scored. Only numbers are printed, with people
-shown as p1, p2, ...; `WORK` keeps the index between runs, so later runs only analyze.
-Delete `WORK` when done.
+completeness from solo photos of labeled people: tune on `dev`, report `test` once. Every
+name in `REFS` is a labeled person, even one no checked row lists, so tripsort putting it
+on a checked photo that does not list it is a wrong photo; `labeled_names_without_a_ref`
+counts names in the rows that match no ref, usually a typo. Other people tripsort finds are
+counted but not scored. Both commands also check that no ref photo is a copy of a labeled
+photo (the same file, a near copy by pHash, or nearly the same face) and print the counts,
+giving any flagged photo by position. Only numbers are printed, with people shown as p1,
+p2, ...; `WORK` keeps the index between runs, so later runs only analyze. Delete `WORK`
+when done.
 
 ### Releasing
 

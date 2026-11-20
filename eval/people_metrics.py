@@ -2,8 +2,9 @@
 
 Only some people are labeled: the labeler and the friends they have refs for. They are
 labeled in every checked row, so a checked row that leaves one of them out says they are
-not in it. Everyone else tripsort finds (strangers, friends without a ref) is counted but
-never scored, since nobody labeled them.
+not in it. Every ref name is a labeled person, even one no checked row lists: tripsort
+putting it on a checked photo is a wrong photo. Everyone else tripsort finds (strangers,
+friends without a ref) is counted but never scored, since nobody labeled them.
 
 Predicted people are matched to labeled people by name first (refs/ and renames give real
 names), then one to one by the most shared photos. A person split in two keeps only their
@@ -90,9 +91,10 @@ def _ratio(num: int, den: int) -> float | None:
 
 
 def people_report(photos: list[Photo], everyone: Counter[str] | None = None) -> dict[str, Any]:
-    """``everyone`` counts each labeled person's photos over every checked row, both splits.
-    A labeled person is labeled in every checked row, so one predicted in a photo of this
-    split that does not list them is a wrong photo, even with no labeled photo here."""
+    """``everyone`` holds every labeled person with their photos over every checked row, both
+    splits; a ref name no checked row lists is in it with 0. A labeled person is labeled in
+    every checked row, so one predicted in a photo of this split that does not list them is
+    a wrong photo, even with no labeled photo here."""
     counts: Counter[str] = Counter(t for p in photos for t in p.labeled)
     totals = everyone if everyone is not None else counts
     labeled = set(totals) | set(counts)
