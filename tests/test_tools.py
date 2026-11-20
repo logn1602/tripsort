@@ -14,6 +14,8 @@ from eval.metrics import Item
 from eval.run_eval import evaluate_dedupe
 from eval.run_eval import main as run_eval_main
 from tools import make_synthetic_copies, smoke_test
+from tripsort.ingest.decode import open_image
+from tripsort.ingest.exif import read_exif
 
 
 def item(member: str, origin: str, role: str, cluster: str, variant: str = "x") -> Item:
@@ -96,6 +98,32 @@ def test_generator_output(synthetic: Path) -> None:
     with zipfile.ZipFile(synthetic / "originals.zip") as zf:
         names = zf.namelist()
     assert all(n.startswith(("originals/o", "negatives/n", "negatives/d")) for n in names)
+
+
+def test_generated_camera_exif_has_a_camera_modify_date(synthetic: Path) -> None:
+    """Cameras write the modify date equal to the capture time; the keeper rule relies on it."""
+    with (synthetic / "truth.csv").open(encoding="utf-8", newline="") as fp:
+        rows = list(csv.DictReader(fp))
+    archives = {
+        name: zipfile.ZipFile(synthetic / f"{name}.zip") for name in ("originals", "copies")
+    }
+    checked: dict[str, int] = {}
+    try:
+        for row in rows:
+            if row["member"].endswith(".png"):
+                continue
+            exif = read_exif(open_image(archives[row["zip"]].read(row["member"])))
+            if exif.datetime is None:  # no camera EXIF: messenger copies, burst_no_exif
+                assert row["variant"] in {"whatsapp", "whatsapp_hd", "telegram", "burst_no_exif"}
+                continue
+            assert exif.modified is not None, row["variant"]
+            assert exif.modified[:19] == exif.datetime[:19], row["variant"]
+            checked[row["variant"]] = checked.get(row["variant"], 0) + 1
+    finally:
+        for archive in archives.values():
+            archive.close()
+    burst_families = {"burst_exif", "burst_same_second", "burst_same_second_exposure_differs"}
+    assert {"original", "storage_saver", "recompress", *burst_families} <= set(checked)
 
 
 def test_dedupe_evaluation(synthetic: Path, tmp_path: Path) -> None:

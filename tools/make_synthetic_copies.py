@@ -20,6 +20,9 @@ Copies (role "copy"):
   recompress     full size, quality 60, EXIF kept (re-saved by an editor)
   heic_to_jpeg   HEIC originals only: full size JPEG, EXIF kept (iPhone "Automatic" transfer)
 
+Generated originals and every burst sibling with EXIF carry a modify date (DateTime) equal to
+their capture time, as cameras write it; copies that keep EXIF keep it byte for byte.
+
 Hard negatives (role "negative", each its own origin, all in originals.zip):
   burst_exif         a burst sibling (1% camera shift, new noise), EXIF time one second later
   burst_same_second  two burst siblings with the same EXIF second, no sub-seconds, and the
@@ -205,6 +208,9 @@ def _generated(n: int, size: tuple[int, int], rng: random.Random) -> Iterator[Or
         exif = Image.Exif()
         exif[ExifTags.Base.Make] = "Synthetic"
         exif[ExifTags.Base.Model] = f"Camera {i % 3}"
+        exif[ExifTags.Base.DateTime] = taken.strftime(
+            _EXIF_TIME
+        )  # modify date, as cameras write it
         ifd = exif.get_ifd(ExifTags.IFD.Exif)
         ifd[ExifTags.Base.DateTimeOriginal] = taken.strftime(_EXIF_TIME)
         ifd[ExifTags.Base.SubsecTimeOriginal] = f"{rng.randrange(1000):03d}"
@@ -306,6 +312,7 @@ def _burst_exif(
     exif[ExifTags.Base.Make] = "Synthetic"
     exif[ExifTags.Base.Model] = model
     stamp = datetime.strptime(base, _EXIF_TIME) + timedelta(seconds=offset_seconds)
+    exif[ExifTags.Base.DateTime] = stamp.strftime(_EXIF_TIME)  # modify date, as cameras write it
     ifd = exif.get_ifd(ExifTags.IFD.Exif)
     ifd[ExifTags.Base.DateTimeOriginal] = stamp.strftime(_EXIF_TIME)
     if subsec is not None:
