@@ -70,7 +70,8 @@ def test_invalid_project_file(tmp_path: Path, text: str, message: str) -> None:
 
 def test_people_defaults_and_overrides(tmp_path: Path) -> None:
     people = load_config().people
-    assert (people.cluster_method, people.min_cluster_size) == ("hdbscan", 3)
+    assert (people.cluster_method, people.min_cluster_size, people.min_samples) == ("hdbscan", 4, 3)
+    assert people.ref_min_similarity == 0.5
     assert (people.foreground_min_ratio, people.foreground_min_height) == (0.3, 0.03)
     folder = write_override(
         tmp_path, '[people]\ncluster_method = "agglomerative"\nattach_min_similarity = 1\n'

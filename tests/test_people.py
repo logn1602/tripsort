@@ -142,12 +142,22 @@ def test_a_whatsapp_copy_is_not_counted_twice(
 
 
 def test_renames_and_merges_survive_new_photos(
-    project: Project, faces_trip: dict[str, Path], marker_faces: MarkerFaceAnalyzer, tmp_path: Path
+    faces_trip: dict[str, Path], marker_faces: MarkerFaceAnalyzer, tmp_path: Path
 ) -> None:
     looks = make_zip(  # person 3 and person 4 are one friend, with and without sunglasses
         tmp_path / "in" / "looks.zip",
         [(f"c{i}.jpg", solo(3 if i < 3 else 4, 20 + i)) for i in range(6)],
     )
+    folder = tmp_path / "small"  # each look is in 3 photos, under the default of 4
+    folder.mkdir()
+    (folder / "tripsort.toml").write_text("[people]\nmin_cluster_size = 3\n", encoding="utf-8")
+    with Project.open(folder) as project:
+        check_renames_and_merges(project, faces_trip, looks, tmp_path)
+
+
+def check_renames_and_merges(
+    project: Project, faces_trip: dict[str, Path], looks: Path, tmp_path: Path
+) -> None:
     project.ingest([faces_trip["mine"], faces_trip["sam"], looks])
     project.analyze()
     assert people(project)["person_04"] == 3
@@ -225,16 +235,23 @@ def test_named_people_count_in_the_background(
             ("s1.jpg", solo(1, 1)),
             ("s2.jpg", solo(1, 2)),
             ("s3.jpg", solo(1, 3)),
+            ("s4.jpg", solo(1, 5)),
             ("x.jpg", shot([(0, 0.3, 0.2, 0.35), (1, 0.8, 0.1, 0.06)], 4)),  # 1 far behind 0
         ],
     )
     project.ingest([trip])
     project.analyze()
-    assert project.people.get("person_01").photos == 3  # unnamed: background faces wait
+    assert project.people.get("person_01").photos == 4  # unnamed: background faces wait
     project.people.rename("person_01", "sam")
     project.export()
-    assert project.people.get("sam").photos == 4
-    assert members(project.folder / "people" / "sam") == {"s1.jpg", "s2.jpg", "s3.jpg", "x.jpg"}
+    assert project.people.get("sam").photos == 5
+    assert members(project.folder / "people" / "sam") == {
+        "s1.jpg",
+        "s2.jpg",
+        "s3.jpg",
+        "s4.jpg",
+        "x.jpg",
+    }
     assert "x.jpg" in members(project.folder / "shots" / "solo")  # still one foreground face
 
 

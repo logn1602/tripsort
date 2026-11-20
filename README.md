@@ -214,8 +214,12 @@ min_face_score = 0.8             # detection score a face needs to count at all
 foreground_min_ratio = 0.30      # foreground: at least this share of the tallest face
 foreground_min_height = 0.03     # and at least this share of the image height
 cluster_method = "hdbscan"       # or "agglomerative"
-min_cluster_size = 3             # fewer faces than this never form a person
+min_cluster_size = 4             # fewer faces than this never form a person
+ref_min_similarity = 0.5         # a refs/ photo names the most similar person if this close
 ```
+
+For a small trip where a friend is in only 3 photos, set `min_cluster_size = 3`. Raising
+it splits people less on big trips but drops friends with few photos.
 
 Changing a threshold needs no re-reading of the zips: faces are found once, at ingest, and
 `tripsort analyze` and `tripsort export` (or `run`) apply any threshold in seconds.
