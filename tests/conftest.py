@@ -3,8 +3,10 @@ from pathlib import Path
 
 import pytest
 from factories import camera_exif, heic, jpeg, make_zip, photo, whatsapp_copy
+from fake_clip import ColorImageEncoder, NullImageEncoder, WordTextEncoder
 from fake_faces import MarkerFaceAnalyzer, NullFaceAnalyzer
 
+import tripsort.clip.encoder
 import tripsort.faces.analyzer
 from tripsort.api import Project
 from tripsort.models.download import model_status
@@ -29,13 +31,20 @@ def _no_real_models(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    """Outside `models` tests, the face models are never loaded and nothing is downloaded:
-    the model folder is empty, and the analyzer finds no faces."""
+    """Outside `models` tests, the models are never loaded and nothing is downloaded: the
+    model folder is empty, the face analyzer finds no faces, and the CLIP encoders are the
+    fakes in fake_clip.py."""
     if request.node.get_closest_marker("models"):
         return
     monkeypatch.setenv("TRIPSORT_MODEL_DIR", str(tmp_path_factory.mktemp("no-models")))
     monkeypatch.setattr(
         tripsort.faces.analyzer, "load_face_analyzer", lambda progress=None: NullFaceAnalyzer()
+    )
+    monkeypatch.setattr(
+        tripsort.clip.encoder, "load_image_encoder", lambda progress=None: NullImageEncoder()
+    )
+    monkeypatch.setattr(
+        tripsort.clip.encoder, "load_text_encoder", lambda progress=None: WordTextEncoder()
     )
 
 
@@ -47,6 +56,14 @@ def marker_faces(monkeypatch: pytest.MonkeyPatch) -> MarkerFaceAnalyzer:
         tripsort.faces.analyzer, "load_face_analyzer", lambda progress=None: analyzer
     )
     return analyzer
+
+
+@pytest.fixture
+def color_clip(monkeypatch: pytest.MonkeyPatch) -> ColorImageEncoder:
+    """CLIP embeddings from a photo's average color (see fake_clip.py) instead of the model."""
+    encoder = ColorImageEncoder()
+    monkeypatch.setattr(tripsort.clip.encoder, "load_image_encoder", lambda progress=None: encoder)
+    return encoder
 
 
 @pytest.fixture

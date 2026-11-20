@@ -6,6 +6,9 @@
 * With a face analyzer, each new photo is scanned for faces in the same decode. Photos
   indexed without one (an older tripsort, no models at the time, or a new face model) are
   scanned afterwards, read back from the zips the index already knows.
+* The same goes for the CLIP image embedding: new photos are embedded in the same decode
+  (in batches, each committed with its photos), and photos without one are embedded
+  afterwards, in the same pass that catches up on faces, so each is read back only once.
 """
 
 import sqlite3
@@ -18,6 +21,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from tripsort.clip.store import ClipBatch, pending_clip_scans
+from tripsort.clip.types import CLIP_MODEL_ID, ClipPixels, ImageEncoder
 from tripsort.faces.store import pending_scans, store_scan
 from tripsort.faces.types import FACE_MODEL_ID, FaceAnalyzer, FaceScan
 from tripsort.ingest.decode import UnreadableImageError, analyze_image
@@ -74,6 +79,10 @@ class IngestResult:
     faces_caught_up: int = 0  # of those, photos from earlier ingests
     faces_pending: int = 0  # photos still waiting for a face scan after this run
     face_problem: str | None = None  # why no faces were scanned at all
+    clip_embedded: int = 0  # photos given a CLIP embedding in this run
+    clip_caught_up: int = 0  # of those, photos from earlier ingests
+    clip_pending: int = 0  # photos still waiting for a CLIP embedding after this run
+    clip_problem: str | None = None  # why no CLIP embeddings were made at all
     peak_rss_bytes: int | None = None
 
     @property
@@ -113,6 +122,19 @@ class IngestResult:
                 f"{'waits' if self.faces_pending == 1 else 'wait'} for a face scan, so people/ "
                 "and shots/ leave them out until a later `tripsort ingest` scans them."
             )
+        if self.clip_problem:
+            lines.append(f"Photos were not embedded for categories and bursts: {self.clip_problem}")
+        if self.clip_caught_up:
+            lines.append(
+                f"Embedded {count(self.clip_caught_up, 'photo')} from earlier zips for "
+                "categories and bursts."
+            )
+        if self.clip_pending:
+            lines.append(
+                f"{count(self.clip_pending, 'photo')} still "
+                f"{'waits' if self.clip_pending == 1 else 'wait'} for a CLIP embedding, so "
+                "categories/ and bursts leave them out until a later `tripsort ingest`."
+            )
         return "\n".join(lines)
 
 
@@ -122,10 +144,17 @@ class _Run:
     progress: Progress
     batch_size: int
     faces: FaceAnalyzer | None = None
+    clip: ClipBatch | None = None
     decoded: int = 0
     faces_scanned: int = 0
     faces_found: int = 0
     problems: list[Problem] = field(default_factory=list)
+
+    def commit(self) -> None:
+        """Commit the open transaction, with the CLIP embeddings of its photos."""
+        if self.clip is not None:
+            self.clip.flush()
+        self.conn.execute("COMMIT")
 
 
 def ingest_zips(
@@ -135,13 +164,15 @@ def ingest_zips(
     progress: Progress | None = None,
     batch_size: int = BATCH_SIZE,
     faces: Callable[[], FaceAnalyzer | None] | None = None,
+    clip: Callable[[], ImageEncoder | None] | None = None,
 ) -> IngestResult:
-    """Ingest ``paths`` into the index behind ``conn``, then scan for faces the photos that
-    have no scan yet. Raises ``ZipError`` before any work if a path is missing or is not a
-    zip.
+    """Ingest ``paths`` into the index behind ``conn``, then scan for faces, and embed with
+    CLIP, the photos that have neither yet. Raises ``ZipError`` before any work if a path is
+    missing or is not a zip.
 
-    ``faces`` loads the face analyzer (or returns None when it cannot). It is called once,
-    before the first photo is read, and only when there is something to scan.
+    ``faces`` loads the face analyzer and ``clip`` the CLIP image encoder (each returns None
+    when it cannot). Each is called once, before the first photo is read, and only when
+    there is something for it to do.
     """
     started = time.perf_counter()
     run = _Run(conn, progress or NullProgress(), batch_size)
@@ -171,10 +202,12 @@ def ingest_zips(
             pending.sort(key=lambda member: member.info.header_offset)
             work.append((source, source_id, report, pending))
 
-        if faces is not None and (
-            any(pending for *_, pending in work) or pending_scans(conn, FACE_MODEL_ID)
-        ):
+        has_new = any(pending for *_, pending in work)
+        if faces is not None and (has_new or pending_scans(conn, FACE_MODEL_ID)):
             run.faces = faces()  # may download the models, with a progress bar of its own
+        if clip is not None and (has_new or pending_clip_scans(conn, CLIP_MODEL_ID)):
+            encoder = clip()  # the same
+            run.clip = ClipBatch(conn, encoder) if encoder is not None else None
         run.progress.start("ingest", sum(m.size for *_, pending in work for m in pending), "bytes")
         for source, source_id, report, pending in work:
             _ingest_source(run, source, source_id, report, pending)
@@ -183,8 +216,10 @@ def ingest_zips(
         for source in opened:
             source.close()
     scanned_inline = run.faces_scanned
-    if run.faces is not None:
-        _scan_pending(run, run.faces)
+    embedded_inline = run.clip.embedded if run.clip is not None else 0
+    if run.faces is not None or run.clip is not None:
+        _scan_pending(run)
+    embedded = run.clip.embedded if run.clip is not None else 0
     return IngestResult(
         sources=reports,
         decoded=run.decoded,
@@ -194,56 +229,85 @@ def ingest_zips(
         faces_scanned=run.faces_scanned,
         faces_found=run.faces_found,
         faces_caught_up=run.faces_scanned - scanned_inline,
+        clip_embedded=embedded,
+        clip_caught_up=embedded - embedded_inline,
     )
 
 
-def _scan_pending(run: _Run, analyzer: FaceAnalyzer) -> None:
-    """Scan the photos that have no face scan for ``analyzer`` yet, zip by zip in file order."""
+def _scan_pending(run: _Run) -> None:
+    """Scan for faces, and embed with CLIP, the photos that have no face scan or no CLIP
+    scan for the loaded models yet, zip by zip in file order. A photo that needs both is
+    read and decoded once."""
     conn = run.conn
+    face_model = run.faces.model_id if run.faces is not None else ""
+    clip_model = run.clip.encoder.model_id if run.clip is not None else ""
     rows = conn.execute(
-        "SELECT m.id, m.sha256 FROM media m WHERE m.kind = 'image' "
-        "AND m.status = 'ok' AND m.id IN (SELECT media_id FROM occurrences) "
-        "AND NOT EXISTS (SELECT 1 FROM face_scans s WHERE s.media_id = m.id "
-        "                AND s.model_id = ?) ORDER BY m.id",
-        (analyzer.model_id,),
+        "SELECT m.id, m.sha256, "
+        "  ? != '' AND NOT EXISTS (SELECT 1 FROM face_scans s WHERE s.media_id = m.id "
+        "                          AND s.model_id = ?), "
+        "  ? != '' AND NOT EXISTS (SELECT 1 FROM clip_scans c WHERE c.media_id = m.id "
+        "                          AND c.model_id = ?) "
+        "FROM media m WHERE m.kind = 'image' "
+        "AND m.status = 'ok' AND m.id IN (SELECT media_id FROM occurrences) ORDER BY m.id",
+        (face_model, face_model, clip_model, clip_model),
     ).fetchall()
+    rows = [row for row in rows if row[2] or row[3]]
     if not rows:
         return
     with ZipCache(conn) as zips:
         located = []
         unreachable: Counter[tuple[str, ...]] = Counter()
-        for media_id, sha256 in rows:
+        for media_id, sha256, need_faces, need_clip in rows:
             found = zips.find(int(media_id))
             if found is None:
                 unreachable[tuple(zips.missing_names(int(media_id)))] += 1
                 continue
             source, member = found
             located.append(
-                (str(source.path), member.info.header_offset, int(media_id), str(sha256), member)
+                (
+                    str(source.path),
+                    member.info.header_offset,
+                    int(media_id),
+                    str(sha256),
+                    member,
+                    bool(need_faces),
+                    bool(need_clip),
+                )
             )
         located.sort(key=lambda item: item[:3])
-        run.progress.start("faces", len(located), "files")
+        run.progress.start("scan", len(located), "files")
         conn.execute("BEGIN")
         try:
-            for done, (zip_path, _, media_id, sha256, member) in enumerate(located, start=1):
-                scan = _rescan(zips, media_id, sha256, member.size, analyzer)
-                if scan is None:
+            for done, (zip_path, _, media_id, sha256, member, need_faces, need_clip) in enumerate(
+                located, start=1
+            ):
+                scan, pixels = _rescan(
+                    zips,
+                    media_id,
+                    sha256,
+                    member.size,
+                    run.faces if need_faces else None,
+                    need_clip,
+                )
+                if scan is None and pixels is None:
                     run.problems.append(
                         Problem(
                             Path(zip_path).name,
                             member.path,
-                            "could not be read back from the zip, so it was not scanned for faces",
+                            "could not be read back from the zip, so it was not scanned",
                         )
                     )
-                else:
-                    store_scan(conn, media_id, analyzer.model_id, scan)
+                if scan is not None and run.faces is not None:
+                    store_scan(conn, media_id, run.faces.model_id, scan)
                     run.faces_scanned += 1
                     run.faces_found += len(scan.faces)
+                if pixels is not None and run.clip is not None:
+                    run.clip.add(media_id, pixels)
                 run.progress.advance(1)
                 if done % run.batch_size == 0:
-                    conn.execute("COMMIT")
+                    run.commit()
                     conn.execute("BEGIN")
-            conn.execute("COMMIT")
+            run.commit()
         except BaseException:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
@@ -255,26 +319,45 @@ def _scan_pending(run: _Run, analyzer: FaceAnalyzer) -> None:
             Problem(
                 ", ".join(names),
                 count(photos, "photo"),
-                "not scanned for faces: the zip is missing or has changed since it was "
-                "indexed; run `tripsort ingest` with the zip's current location",
+                "not scanned: the zip is missing or has changed since it was indexed; run "
+                "`tripsort ingest` with the zip's current location",
             )
         )
 
 
 def _rescan(
-    zips: ZipCache, media_id: int, sha256: str, size: int, analyzer: FaceAnalyzer
-) -> FaceScan | None:
-    """Read one photo back from its zip and scan it; None when its bytes cannot be read."""
+    zips: ZipCache,
+    media_id: int,
+    sha256: str,
+    size: int,
+    analyzer: FaceAnalyzer | None,
+    clip: bool,
+) -> tuple[FaceScan | None, ClipPixels | None]:
+    """Read one photo back from its zip, then scan it for faces (with ``analyzer``) and
+    prepare its CLIP input (with ``clip``). Both are None when its bytes cannot be read."""
     if size > MAX_BUFFERED_IMAGE_BYTES:
-        return FaceScan("not_decoded", detail="too large to decode")
+        detail = "too large to decode"
+        return (
+            FaceScan("not_decoded", detail=detail) if analyzer is not None else None,
+            ClipPixels("not_decoded", detail=detail) if clip else None,
+        )
     data = zips.read(media_id, sha256)
     if data is None:
-        return None
+        return None, None
     try:
-        scan = analyze_image(data, faces=analyzer).faces
+        analysis = analyze_image(data, faces=analyzer, clip=clip)
     except UnreadableImageError as exc:
-        return FaceScan("failed", detail=str(exc))
-    return scan if scan is not None else FaceScan("failed")
+        return (
+            FaceScan("failed", detail=str(exc)) if analyzer is not None else None,
+            ClipPixels("failed", detail=str(exc)) if clip else None,
+        )
+    scan = analysis.faces
+    if analyzer is not None and scan is None:
+        scan = FaceScan("failed")
+    pixels = analysis.clip
+    if clip and pixels is None:
+        pixels = ClipPixels("failed")
+    return scan, pixels
 
 
 def _now() -> str:
@@ -341,13 +424,13 @@ def _ingest_source(
             _ingest_member(run, source, source_id, report, member)
             run.progress.advance(member.size)
             if count % run.batch_size == 0:
-                conn.execute("COMMIT")
+                run.commit()
                 conn.execute("BEGIN")
         conn.execute(
             "UPDATE sources SET status = 'complete', completed_at = ? WHERE id = ?",
             (_now(), source_id),
         )
-        conn.execute("COMMIT")
+        run.commit()
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
@@ -389,6 +472,7 @@ def _ingest_member(
 def _insert_media(run: _Run, report: SourceReport, member: Member, hashed: HashedBytes) -> int:
     values: dict[str, object] = {"sha256": hashed.sha256, "bytes": hashed.size}
     scan: FaceScan | None = None
+    pixels: ClipPixels | None = None
     if member.kind == "video":
         suffix = PurePosixPath(member.path).suffix.lower()
         values.update(kind="video", format=_VIDEO_FORMATS.get(suffix), note=VIDEO_NOTE)
@@ -396,10 +480,11 @@ def _insert_media(run: _Run, report: SourceReport, member: Member, hashed: Hashe
         values.update(kind="image", note="too large to decode; checked for exact duplicates only")
         if run.faces is not None:
             scan = FaceScan("not_decoded", detail="too large to decode")
+        pixels = ClipPixels("not_decoded", detail="too large to decode")
     else:
         values["kind"] = "image"
         try:
-            analysis = analyze_image(hashed.data, faces=run.faces)
+            analysis = analyze_image(hashed.data, faces=run.faces, clip=run.clip is not None)
         except UnreadableImageError as exc:
             values.update(status="unreadable", note=str(exc))
             report.unreadable += 1
@@ -433,6 +518,7 @@ def _insert_media(run: _Run, report: SourceReport, member: Member, hashed: Hashe
             if analysis.decoded:
                 run.decoded += 1
             scan = analysis.faces
+            pixels = analysis.clip
     columns = ", ".join(values)
     placeholders = ", ".join("?" for _ in values)
     cursor = run.conn.execute(
@@ -443,6 +529,8 @@ def _insert_media(run: _Run, report: SourceReport, member: Member, hashed: Hashe
         store_scan(run.conn, cursor.lastrowid, run.faces.model_id, scan)
         run.faces_scanned += 1
         run.faces_found += len(scan.faces)
+    if pixels is not None and run.clip is not None:
+        run.clip.add(cursor.lastrowid, pixels)
     return cursor.lastrowid
 
 

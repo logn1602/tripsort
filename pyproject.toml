@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "imagehash>=4.3.2",
     "numpy>=2.0",
+    "onnxruntime>=1.31.1",
     "opencv-python-headless>=5.1.0.95",
     "pi-heif>=1.4",
     "pillow>=11.1",

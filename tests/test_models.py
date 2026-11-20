@@ -52,13 +52,20 @@ def local_model(tmp_path: Path, data: bytes = b"weights " * 1000) -> ModelFile:
 
 
 def test_the_registry_pins_every_model() -> None:
-    for model in registry.ALL_MODELS:
-        assert model.url.startswith("https://github.com/opencv/opencv_zoo/raw/")
-        assert registry.OPENCV_ZOO_COMMIT in model.url  # a commit, never a branch
+    pinned = (
+        f"https://github.com/opencv/opencv_zoo/raw/{registry.OPENCV_ZOO_COMMIT}/",  # a commit
+        f"https://github.com/logn1602/tripsort/releases/download/{registry.CLIP_RELEASE}/",
+    )
+    every = {*registry.ALL_MODELS, registry.CLIP_IMAGE_FP32, registry.CLIP_IMAGE_INT8}
+    for model in every:
+        assert model.url.startswith(pinned), model.name
         assert re.fullmatch(r"[0-9a-f]{64}", model.sha256)
         assert model.size > 100_000
         assert model.url.endswith(model.filename)
+    assert len({m.filename for m in every}) == len(every)
     assert {m.license for m in registry.FACE_MODELS} == {"MIT", "Apache-2.0"}
+    assert {m.license for m in every - set(registry.FACE_MODELS)} == {"MIT"}
+    assert registry.CLIP_IMAGE in {registry.CLIP_IMAGE_FP32, registry.CLIP_IMAGE_INT8}
 
 
 def test_model_folder(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

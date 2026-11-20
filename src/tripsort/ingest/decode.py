@@ -1,5 +1,6 @@
 """Decode an image once, at reduced size, and compute what later stages need from pixels:
-the metadata, the pHash, and (when a face analyzer is given) the faces.
+the metadata, the pHash, (when a face analyzer is given) the faces, and (when asked) the
+CLIP input, from the same oriented pixels the faces are found in.
 
 Pillow's decompression-bomb check runs when an image is opened, before tripsort can use
 JPEG draft mode, so a 200 MP phone photo would be refused even though draft mode decodes
@@ -19,6 +20,8 @@ import numpy as np
 import pi_heif
 from PIL import Image, ImageOps
 
+from tripsort.clip.preprocess import clip_input
+from tripsort.clip.types import ClipPixels
 from tripsort.faces.types import FaceAnalyzer, FaceScan, RGBImage
 from tripsort.ingest.exif import NO_EXIF, ExifInfo, read_exif
 from tripsort.ingest.hashing import phash_hex
@@ -46,6 +49,7 @@ class ImageAnalysis:
     decoded: bool  # whether pixels were decoded
     note: str | None = None
     faces: FaceScan | None = None  # None when no face analyzer was given
+    clip: ClipPixels | None = None  # None unless the CLIP input was asked for
 
 
 def _ensure_plugins() -> None:
@@ -82,9 +86,14 @@ def draft_box(size: tuple[int, int], max_side: int) -> tuple[int, int] | None:
 
 
 def analyze_image(
-    data: bytes, *, max_side: int = DECODE_MAX_SIDE, faces: FaceAnalyzer | None = None
+    data: bytes,
+    *,
+    max_side: int = DECODE_MAX_SIDE,
+    faces: FaceAnalyzer | None = None,
+    clip: bool = False,
 ) -> ImageAnalysis:
-    """Decode ``data`` at reduced size and return its metadata, pHash, and faces.
+    """Decode ``data`` at reduced size and return its metadata, pHash, faces, and (with
+    ``clip``) the CLIP input.
 
     Raises ``UnreadableImageError`` when the bytes are not a decodable image.
     """
@@ -92,16 +101,17 @@ def analyze_image(
         # Pillow warns about odd but harmless files (truncated EXIF, malformed MPO data);
         # one line per photo would bury the summary.
         warnings.simplefilter("ignore")
-        return _analyze(data, max_side, faces)
+        return _analyze(data, max_side, faces, clip)
 
 
-def _analyze(data: bytes, max_side: int, faces: FaceAnalyzer | None) -> ImageAnalysis:
+def _analyze(data: bytes, max_side: int, faces: FaceAnalyzer | None, clip: bool) -> ImageAnalysis:
     try:
         image = open_image(data)
     except Image.DecompressionBombError as exc:
         note = f"not decoded: {exc}"
         scan = FaceScan("not_decoded", detail=note) if faces is not None else None
-        return ImageAnalysis(None, None, None, NO_EXIF, None, False, note, scan)
+        pixels = ClipPixels("not_decoded", detail=note) if clip else None
+        return ImageAnalysis(None, None, None, NO_EXIF, None, False, note, scan, pixels)
     except Exception as exc:  # decoders raise many exception types on bad input
         raise UnreadableImageError(_describe(exc)) from exc
 
@@ -122,7 +132,8 @@ def _analyze(data: bytes, max_side: int, faces: FaceAnalyzer | None) -> ImageAna
                 "checked for exact duplicates only"
             )
             scan = FaceScan("not_decoded", detail=note) if faces is not None else None
-            return ImageAnalysis(fmt, width, height, exif, None, False, note, scan)
+            pixels = ClipPixels("not_decoded", detail=note) if clip else None
+            return ImageAnalysis(fmt, width, height, exif, None, False, note, scan, pixels)
 
         try:
             image.load()
@@ -135,8 +146,8 @@ def _analyze(data: bytes, max_side: int, faces: FaceAnalyzer | None) -> ImageAna
             phash = phash_hex(_prepare(image))
         except Exception as exc:  # keep the file, just without a pHash
             phash_note = f"no pHash: {_describe(exc)}"
-        scan = _scan_faces(image, faces) if faces is not None else None
-    return ImageAnalysis(fmt, width, height, exif, phash, True, phash_note, scan)
+        scan, pixels = _pixel_features(image, faces, clip)
+    return ImageAnalysis(fmt, width, height, exif, phash, True, phash_note, scan, pixels)
 
 
 def _prepare(image: Image.Image) -> Image.Image:
@@ -184,15 +195,33 @@ def decode_oriented(data: bytes, max_side: int = DECODE_MAX_SIDE) -> RGBImage:
             raise UnreadableImageError(_describe(exc)) from exc
 
 
-def _scan_faces(image: Image.Image, analyzer: FaceAnalyzer) -> FaceScan:
+def _pixel_features(
+    image: Image.Image, analyzer: FaceAnalyzer | None, clip: bool
+) -> tuple[FaceScan | None, ClipPixels | None]:
+    """The face scan and the CLIP input, both from one EXIF-oriented RGB copy."""
+    if analyzer is None and not clip:
+        return None, None
     try:
         rgb = face_source(image)
     except Exception as exc:  # e.g. a pixel mode with no RGB conversion
-        return FaceScan("failed", detail=f"could not prepare the pixels: {_describe(exc)}")
-    try:
-        return FaceScan("ok", analyzer.analyze(rgb))
-    except Exception as exc:  # a face scan failure never stops the ingest
-        return FaceScan("failed", detail=_describe(exc))
+        detail = f"could not prepare the pixels: {_describe(exc)}"
+        return (
+            FaceScan("failed", detail=detail) if analyzer is not None else None,
+            ClipPixels("failed", detail=detail) if clip else None,
+        )
+    scan: FaceScan | None = None
+    if analyzer is not None:
+        try:
+            scan = FaceScan("ok", analyzer.analyze(rgb))
+        except Exception as exc:  # a face scan failure never stops the ingest
+            scan = FaceScan("failed", detail=_describe(exc))
+    pixels: ClipPixels | None = None
+    if clip:
+        try:
+            pixels = ClipPixels("ok", clip_input(rgb))
+        except Exception as exc:  # nor does a CLIP input failure
+            pixels = ClipPixels("failed", detail=_describe(exc))
+    return scan, pixels
 
 
 def _describe(exc: BaseException) -> str:

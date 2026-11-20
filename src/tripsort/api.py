@@ -29,6 +29,8 @@ from typing import Self
 
 from tripsort import __version__
 from tripsort._bench import peak_rss_bytes
+from tripsort.clip.store import pending_clip_scans
+from tripsort.clip.types import CLIP_MODEL_ID, ImageEncoder
 from tripsort.config import Config, load_config
 from tripsort.dedupe.copies import rebuild_copy_groups
 from tripsort.errors import ModelError, UserError, ZipError
@@ -154,6 +156,7 @@ class Project:
         self.config = config
         self._conn = conn
         self._faces: FaceAnalyzer | None = None
+        self._clip: ImageEncoder | None = None
         self.people = People(self)
 
     @classmethod
@@ -182,30 +185,55 @@ class Project:
             self._faces = analyzer.load_face_analyzer(progress)
         return self._faces
 
+    def clip_encoder(self, progress: Progress | None = None) -> ImageEncoder:
+        """The CLIP image encoder, loaded once per project; the model downloads on first use.
+
+        Raises ``ModelError`` when the model cannot be downloaded.
+        """
+        if self._clip is None:
+            from tripsort.clip import encoder  # ONNX Runtime loads only when CLIP is needed
+
+            self._clip = encoder.load_image_encoder(progress)
+        return self._clip
+
     def ingest(
         self, zips: Iterable[str | os.PathLike[str]] = (), *, progress: Progress | None = None
     ) -> IngestResult:
-        """Stage 1: read the zips and decode every file not seen before, finding faces in
-        the same pass. Photos indexed earlier without a face scan are scanned too, so
-        ``ingest()`` with no zips only catches up on faces."""
+        """Stage 1: read the zips and decode every file not seen before, finding faces and
+        the CLIP embedding in the same pass. Photos indexed earlier without either are
+        scanned too, so ``ingest()`` with no zips only catches up on them."""
         paths = [Path(z) for z in zips]
         for path in paths:  # before the models load (or download) for nothing
             if not path.is_file():
                 raise ZipError(f"{path.resolve()}: no such file")
-        problem: list[str] = []
+        face_problem: list[str] = []
+        clip_problem: list[str] = []
 
         def load_faces() -> FaceAnalyzer | None:
             try:
                 return self.face_analyzer(progress)
             except ModelError as exc:
-                problem.append(str(exc))
+                face_problem.append(str(exc))
+                return None
+
+        def load_clip() -> ImageEncoder | None:
+            try:
+                return self.clip_encoder(progress)
+            except ModelError as exc:
+                clip_problem.append(str(exc))
                 return None
 
         with self._run("ingest") as run:
-            result = ingest_zips(self._conn, paths, progress=progress, faces=load_faces)
-            result.face_problem = problem[0] if problem else None
+            result = ingest_zips(
+                self._conn, paths, progress=progress, faces=load_faces, clip=load_clip
+            )
+            result.face_problem = face_problem[0] if face_problem else None
             result.faces_pending = pending_scans(
                 self._conn, self._faces.model_id if self._faces else FACE_MODEL_ID
+            )
+            result.clip_problem = clip_problem[0] if clip_problem else None
+            result.clip_pending = pending_clip_scans(
+                self._conn, self._clip.model_id if self._clip else CLIP_MODEL_ID
             )
             run.items, run.bytes = result.files_read, result.bytes_read
         result.peak_rss_bytes = run.peak_rss_bytes
