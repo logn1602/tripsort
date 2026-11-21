@@ -140,6 +140,7 @@ def test_a_category_only_set_is_labeled_and_scored(
     mistakes = (flat / "category_mistakes.html").read_text(encoding="utf-8")
     assert "labeled <b>other</b>, tripsort <b>animals</b>" in mistakes
     assert result["settings"]["categories"]["food"] == ["food"]
+    assert set(result["bursts_on_this_set"]) == {"bursts", "photos_in_bursts", "consecutive_shots"}
 
     code, out = run(capsys, "categories", *common, "--split", "test")
     assert json.loads(out)["checked_rows"] == 0

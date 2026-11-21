@@ -70,6 +70,19 @@ def analyze_bursts(
 ) -> BurstStats:
     """Rebuild the burst groups from the kept photos. Call inside a transaction."""
     conn.execute("DELETE FROM media_groups WHERE kind = 'burst'")
+    shots = load_shots(conn, model_id)
+    bursts = group_bursts(shots, thresholds.burst_similarity, thresholds.burst_window_seconds)
+    for members in bursts:  # in camera, then time order: stable group ids for the same input
+        cursor = conn.execute("INSERT INTO media_groups (kind) VALUES ('burst')")
+        conn.executemany(
+            "INSERT INTO group_members (group_id, media_id) VALUES (?, ?)",
+            [(cursor.lastrowid, media_id) for media_id in members],
+        )
+    return BurstStats(bursts=len(bursts), photos=sum(len(b) for b in bursts))
+
+
+def load_shots(conn: sqlite3.Connection, model_id: str = CLIP_MODEL_ID) -> list[Shot]:
+    """The kept photos that can be in a burst: a trusted capture time and a CLIP embedding."""
     kept = kept_images(conn)
     placeholders = ", ".join("?" for _ in TRUSTED_TIMES)
     shots = []
@@ -87,14 +100,7 @@ def analyze_bursts(
         camera = f"camera:{make or ''}|{model}" if model else f"zip:{source}"
         vector = np.frombuffer(blob, dtype=np.float32, count=EMBEDDING_SIZE)
         shots.append(Shot(int(media_id), camera, seconds, vector))
-    bursts = group_bursts(shots, thresholds.burst_similarity, thresholds.burst_window_seconds)
-    for members in bursts:  # in camera, then time order: stable group ids for the same input
-        cursor = conn.execute("INSERT INTO media_groups (kind) VALUES ('burst')")
-        conn.executemany(
-            "INSERT INTO group_members (group_id, media_id) VALUES (?, ?)",
-            [(cursor.lastrowid, media_id) for media_id in members],
-        )
-    return BurstStats(bursts=len(bursts), photos=sum(len(b) for b in bursts))
+    return shots
 
 
 _EPOCH = datetime(1970, 1, 1)

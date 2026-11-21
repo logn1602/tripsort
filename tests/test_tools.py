@@ -11,7 +11,7 @@ from factories import camera_exif, heic, jpeg, photo
 
 from eval import metrics
 from eval.metrics import Item
-from eval.run_eval import evaluate_dedupe
+from eval.run_eval import evaluate_bursts, evaluate_dedupe, similarity_histogram
 from eval.run_eval import main as run_eval_main
 from tools import make_synthetic_copies, smoke_test
 from tripsort.ingest.decode import open_image
@@ -221,3 +221,48 @@ def test_generator_holds_one_photo_at_a_time(
     argv = [str(tmp_path / "out"), "--generate", "4", "--size", "320x240", "--documents", "1"]
     assert make_synthetic_copies.main(argv) == 0
     assert not still_open
+
+
+def test_the_burst_set_and_its_evaluation(tmp_path: Path, color_clip: object) -> None:
+    out = tmp_path / "bursts"
+    argv = [str(out), "--bursts", "--generate", "3", "--size", "480x360"]
+    assert make_synthetic_copies.main(argv) == 0
+    with (out / "bursts_truth.csv").open(encoding="utf-8", newline="") as fp:
+        rows = list(csv.DictReader(fp))
+    roles = [r["role"] for r in rows]
+    assert (roles.count("first"), roles.count("burst"), roles.count("neighbor")) == (3, 6, 2)
+    with zipfile.ZipFile(out / "bursts.zip") as zf:
+        assert sorted(zf.namelist()) == sorted(r["member"] for r in rows)
+
+    result = evaluate_bursts(out, tmp_path / "work", {})
+    assert (result["shots"], result["moments"]) == (11, 5)  # 3 bursts, 2 neighbors alone
+    assert result["pairs"]["recall"] == 1.0
+    assert result["burst_shots_missed"] == 0
+    similar = result["similarity_to_first_shot"]
+    assert sum(similar["burst_shots"].values()) == 6
+    assert sum(similar["neighbors"].values()) == 2
+    assert result["settings"] == {"burst_similarity": 0.92, "burst_window_seconds": 10.0}
+
+
+def test_similarity_bands() -> None:
+    bands = similarity_histogram([0.5, 0.80, 0.919, 0.92, 0.975, 0.99, 1.0])
+    assert list(bands) == [
+        "<0.80",
+        "0.80-0.85",
+        "0.85-0.90",
+        "0.90-0.92",
+        "0.92-0.94",
+        "0.94-0.96",
+        "0.96-0.98",
+        ">=0.98",
+    ]
+    assert bands == {
+        "<0.80": 1,
+        "0.80-0.85": 1,
+        "0.85-0.90": 0,
+        "0.90-0.92": 1,
+        "0.92-0.94": 1,
+        "0.94-0.96": 0,
+        "0.96-0.98": 1,
+        ">=0.98": 2,
+    }

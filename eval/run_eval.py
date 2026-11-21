@@ -47,7 +47,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import contextlib
 import html
+import itertools
 
+import numpy as np
 from category_metrics import category_report
 from datasets import Source, build_sources, eval_dir, file_key  # the sibling modules
 from labels import CATEGORIES, Row, person_key, read_rows, split_for, write_rows
@@ -655,6 +657,7 @@ def evaluate_categories(
             "AND is_front_camera IS NOT NULL AND clip_selfie IS NOT NULL"
         ).fetchall()
         page = _write_mistakes(root, project, rows, files, kept) if mistakes else None
+        survey = burst_survey(conn)
     checked = [r for r in rows if r.checked and r.split == split]
     pairs: list[tuple[str, str]] = []
     right_rows: list[int] = []
@@ -709,12 +712,141 @@ def evaluate_categories(
             },
         },
         "mistakes_page": page,
+        "bursts_on_this_set": survey,
         "seconds": round(time.perf_counter() - started, 1),
     }
 
 
 def _share(num: int, den: int) -> float | None:
     return round(num / den, 4) if den else None
+
+
+_SIMILARITY_EDGES = (0.80, 0.85, 0.90, 0.92, 0.94, 0.96, 0.98)
+
+
+def similarity_histogram(values: list[float]) -> dict[str, int]:
+    """How many CLIP similarities fall in each band, the bands around burst_similarity."""
+    labels = [f"<{_SIMILARITY_EDGES[0]:.2f}"]
+    labels += [f"{a:.2f}-{b:.2f}" for a, b in itertools.pairwise(_SIMILARITY_EDGES)]
+    labels.append(f">={_SIMILARITY_EDGES[-1]:.2f}")
+    counts = dict.fromkeys(labels, 0)
+    for value in values:
+        band = sum(1 for edge in _SIMILARITY_EDGES if value >= edge)
+        counts[labels[band]] += 1
+    return counts
+
+
+def burst_survey(conn: Any) -> dict[str, Any]:
+    """On a real set, no burst labels: how alike consecutive shots of one camera are, by the
+    time between them, and how many bursts the current settings find."""
+    from tripsort.clip.bursts import load_shots
+
+    by_camera: defaultdict[str, list[Any]] = defaultdict(list)
+    for shot in load_shots(conn):
+        by_camera[shot.camera].append(shot)
+    gaps: dict[str, list[float]] = {"under_10s": [], "10_to_60s": [], "60_to_600s": []}
+    for shots in by_camera.values():
+        shots.sort(key=lambda s: (s.seconds, s.media_id))
+        for a, b in itertools.pairwise(shots):
+            gap = b.seconds - a.seconds
+            band = "under_10s" if gap <= 10 else "10_to_60s" if gap <= 60 else "60_to_600s"
+            if gap <= 600:
+                gaps[band].append(float(a.embedding @ b.embedding))
+    (bursts, photos) = conn.execute(
+        "SELECT COUNT(DISTINCT g.id), COUNT(gm.media_id) FROM media_groups g "
+        "JOIN group_members gm ON gm.group_id = g.id WHERE g.kind = 'burst'"
+    ).fetchone()
+    return {
+        "bursts": int(bursts),
+        "photos_in_bursts": int(photos),
+        "consecutive_shots": {band: similarity_histogram(v) for band, v in gaps.items()},
+    }
+
+
+def evaluate_bursts(data_dir: Path, work: Path, overrides: dict[str, str]) -> dict[str, Any]:
+    """Burst grouping on tools/make_synthetic_copies.py --bursts output: pairwise precision
+    and recall against the true moments, burst shots missed, neighbors that joined a burst,
+    and how alike CLIP finds a moment's shots, and a neighbor, to its first shot."""
+    started = time.perf_counter()
+    with (data_dir / "bursts_truth.csv").open(encoding="utf-8", newline="") as fp:
+        truth = {r["member"]: (r["moment"], r["role"]) for r in csv.DictReader(fp)}
+    folder = work / "project"
+    folder.mkdir(parents=True, exist_ok=True)
+    _write_overrides(folder, overrides)
+    with Project.open(folder) as project:
+        project.ingest([data_dir / "bursts.zip"])
+        project.analyze()
+        conn = project.connection
+        media_of = {
+            str(member): int(media_id)
+            for media_id, member in conn.execute("SELECT media_id, member_path FROM occurrences")
+        }
+        group_of = {
+            int(media_id): int(group_id)
+            for group_id, media_id in conn.execute(
+                "SELECT gm.group_id, gm.media_id FROM group_members gm "
+                "JOIN media_groups g ON g.id = gm.group_id WHERE g.kind = 'burst'"
+            )
+        }
+        vectors = {
+            int(media_id): np.frombuffer(blob, dtype=np.float32)
+            for media_id, blob in conn.execute(
+                "SELECT media_id, embedding FROM clip_embeddings WHERE model_id = ?",
+                (CLIP_MODEL_ID,),
+            )
+        }
+        settings = {
+            "burst_similarity": project.config.thresholds.burst_similarity,
+            "burst_window_seconds": project.config.thresholds.burst_window_seconds,
+        }
+    members = sorted(m for m in truth if m in media_of)
+    tp = fp = fn = 0
+    for i, a in enumerate(members):
+        for b in members[i + 1 :]:
+            same = truth[a][0] == truth[b][0]
+            ga, gb = group_of.get(media_of[a]), group_of.get(media_of[b])
+            grouped = ga is not None and ga == gb
+            tp += same and grouped
+            fp += grouped and not same
+            fn += same and not grouped
+    firsts = {truth[m][0]: m for m in members if truth[m][1] == "first"}
+    burst_sims, neighbor_sims = [], []
+    missed = joined = 0
+    for member in members:
+        moment, role = truth[member]
+        index = moment[1:]
+        first = firsts.get(moment if role != "neighbor" else f"m{index}")
+        if first is None or member == first:
+            continue
+        a, b = media_of[first], media_of[member]
+        similarity = float(vectors[a] @ vectors[b]) if a in vectors and b in vectors else None
+        same_group = group_of.get(a) is not None and group_of.get(a) == group_of.get(b)
+        if role == "burst":
+            missed += not same_group
+            if similarity is not None:
+                burst_sims.append(similarity)
+        elif role == "neighbor":
+            joined += same_group
+            if similarity is not None:
+                neighbor_sims.append(similarity)
+    return {
+        "tripsort_version": __version__,
+        "clip_model": CLIP_MODEL_ID,
+        "settings": settings,
+        "shots": len(members),
+        "moments": len({truth[m][0] for m in members}),
+        "pairs": {
+            "precision": _share(tp, tp + fp) if tp + fp else 1.0,
+            "recall": _share(tp, tp + fn),
+        },
+        "burst_shots_missed": missed,
+        "neighbors_joined": joined,
+        "similarity_to_first_shot": {
+            "burst_shots": similarity_histogram(burst_sims),
+            "neighbors": similarity_histogram(neighbor_sims),
+        },
+        "seconds": round(time.perf_counter() - started, 1),
+    }
 
 
 _MISTAKES_STYLE = (
@@ -852,6 +984,12 @@ def main(argv: list[str] | None = None) -> int:
     dedupe.add_argument("--work", type=Path, help="project folder to use (default: a temp folder)")
     dedupe.add_argument("--name", default="generated", help="baseline key (default: generated)")
     dedupe.add_argument("--write-baseline", action="store_true", help="save to eval/baseline.json")
+    bursts = sub.add_parser("bursts", help="burst grouping on make_synthetic_copies.py --bursts")
+    bursts.add_argument("data", type=Path, help="folder from make_synthetic_copies.py --bursts")
+    bursts.add_argument("--work", type=Path, help="project folder to use (default: a temp folder)")
+    bursts.add_argument("--set", action="append", default=[], metavar="TABLE.KEY=VALUE")
+    bursts.add_argument("--name", default="generated", help="baseline key (default: generated)")
+    bursts.add_argument("--write-baseline", action="store_true", help="save to eval/baseline.json")
     for name, text in (
         ("prelabel", "write labels.csv and labels.html into the labeled set's folder"),
         ("people", "per-person precision and recall on the checked rows of labels.csv"),
@@ -886,6 +1024,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2))
         if args.write_baseline:
             _save_baseline("dedupe", args.name, result)
+        return 0
+    if args.command == "bursts":
+        burst_overrides = dict(item.split("=", 1) for item in args.set)
+        result = _with_work(args.work, lambda w: evaluate_bursts(args.data, w, burst_overrides))
+        print(json.dumps(result, indent=2))
+        if args.write_baseline:
+            _save_baseline("bursts", args.name, result)
         return 0
 
     root = args.labeled_set if args.labeled_set is not None else eval_dir()
