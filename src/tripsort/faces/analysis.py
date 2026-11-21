@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 
 from tripsort.config import PeopleSettings
+from tripsort.dedupe.copies import kept_images
 from tripsort.faces.cluster import NOISE, attach_noise, cluster_embeddings, eject_outliers
 from tripsort.faces.foreground import foreground
 from tripsort.faces.identity import carry_over
@@ -58,7 +59,7 @@ def analyze_people(
     conn: sqlite3.Connection, settings: PeopleSettings, model_id: str = FACE_MODEL_ID
 ) -> PeopleStats:
     """Run every step and store the results. Call inside a transaction."""
-    kept = _kept_images(conn)
+    kept = kept_images(conn)
     scanned = {
         int(media_id)
         for (media_id,) in conn.execute(
@@ -200,17 +201,21 @@ def analyze_people(
         "(SELECT person_id FROM faces WHERE person_id IS NOT NULL)"
     )
 
-    # 7. shot types
+    # 7. shot types (the selfie hint comes from analyze_categories, which runs first)
     fg_count = Counter(int(media[i]) for i in np.flatnonzero(fg))
     shots: Counter[str] = Counter()
     updates: list[tuple[int | None, str | None, int | None, int]] = []
-    for media_id, lens_model in conn.execute("SELECT id, lens_model FROM media").fetchall():
+    for media_id, lens_model, clip_selfie in conn.execute(
+        "SELECT id, lens_model, clip_selfie FROM media"
+    ).fetchall():
         front = is_front_camera(lens_model)
         shot: str | None = None
         selfie: int | None = None
         if int(media_id) in kept and int(media_id) in scanned:
             shot = shot_type(fg_count[int(media_id)])
-            selfie = int(is_selfie(front, fg_count[int(media_id)]))
+            selfie = int(
+                is_selfie(front, fg_count[int(media_id)], clip_selfie, settings.selfie_min_score)
+            )
             shots[shot] += 1
             shots["selfie"] += selfie
         updates.append((None if front is None else int(front), shot, selfie, int(media_id)))
@@ -238,20 +243,6 @@ def analyze_people(
         refs_unmatched=sorted(set(refs) - set(matches.matched) - matches.settled),
         suggestions=suggest_merges(conn, settings.suggest_min_similarity),
     )
-
-
-def _kept_images(conn: sqlite3.Connection) -> set[int]:
-    """Images in all/: decodable, in some zip, and not a copy of another photo."""
-    return {
-        int(media_id)
-        for (media_id,) in conn.execute(
-            "SELECT id FROM media WHERE kind = 'image' AND status = 'ok' "
-            "AND id IN (SELECT media_id FROM occurrences) "
-            "AND id NOT IN (SELECT gm.media_id FROM group_members gm "
-            "               JOIN media_groups g ON g.id = gm.group_id "
-            "               WHERE g.kind = 'copy' AND gm.is_keeper = 0)"
-        )
-    }
 
 
 def _people(conn: sqlite3.Connection) -> dict[int, dict[str, Any]]:

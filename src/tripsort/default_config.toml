@@ -8,6 +8,10 @@ phash_max_distance = 6                   # at least one of the two files has no 
 phash_max_distance_both_exif = 2         # both have EXIF capture times (which must match), same size
 phash_max_distance_both_exif_resized = 4 # the same, but the pixel sizes differ (bursts never do)
 copy_max_aspect_diff = 0.02             # largest relative difference in width / height for a copy
+# Categories and bursts come from CLIP photo embeddings; initial values, tuned with eval/run_eval.py.
+category_min_score = 0.30               # a photo's top category needs at least this share (0 to 1), else it is `other`
+burst_similarity = 0.92                 # CLIP similarity each shot of a burst needs to the burst's first shot
+burst_window_seconds = 10.0             # the most a burst's shots may come after its first, on one camera
 
 [people]
 # Faces are found once, at ingest; every value here applies in `analyze`, so changing one
@@ -26,3 +30,31 @@ attach_min_similarity = 0.5        # an unclustered foreground face joins the mo
 ref_min_similarity = 0.5           # a refs/ photo names the most similar person if at least this close
 background_min_similarity = 0.5    # a background face counts for a named person if at least this close
 suggest_min_similarity = 0.6       # suggest merging an unnamed person into a named one this close (never automatic)
+# CLIP's selfie hint, used only when a photo's lens model does not say which camera took it:
+# the share (0 to 1) CLIP gives the selfie prompts against the others.
+selfie_min_score = 0.8
+selfie_prompts = ["a selfie", "a selfie taken with a phone's front camera"]
+not_selfie_prompts = ["a photo of people taken by someone else", "a photo of a person taken from a distance"]
+
+[categories]
+# Each [categories.<name>] table is a category, sorted into categories/<name>/. A photo's
+# score for a category is its average CLIP similarity to the category's prompts, and a
+# softmax over every category (and `other`, which gets no folder) turns the scores into
+# shares that add up to 1. Add a category with a new table, change one by giving it new
+# prompts, and drop one with an empty prompts list. Photos where people are the subject
+# belong in `other`.
+
+[categories.scenery]
+prompts = ["a landscape photo", "a photo of a beach", "a scenic mountain view", "a city skyline", "a sunset over the water"]
+
+[categories.animals]
+prompts = ["a photo of a dog", "a photo of a cat", "a photo of a bird", "a photo of a wild animal"]
+
+[categories.food]
+prompts = ["a photo of food on a plate", "a photo of a meal at a restaurant"]
+
+[categories.documents]
+prompts = ["a screenshot of a phone screen", "a photo of a receipt", "a photo of a ticket", "a photo of a map"]
+
+[categories.other]
+prompts = ["a photo of people", "a photo of friends posing", "a selfie", "a photo of a room", "a photo"]

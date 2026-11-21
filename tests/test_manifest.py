@@ -28,6 +28,9 @@ FILE_FIELDS = {
     "shot": (str, type(None)),
     "selfie": (bool, type(None)),
     "faces": (dict, type(None)),
+    "category": (str, type(None)),
+    "category_scores": (dict, type(None)),
+    "burst": (int, type(None)),
     "paths": list,
     "occurrences": list,
 }
@@ -37,6 +40,7 @@ TOP_LEVEL = {
     "config_hash",
     "thresholds",
     "people_settings",
+    "categories",
     "analyzers",
     "people",
     "summary",
@@ -69,6 +73,9 @@ def test_schema(project: Project, trip: dict[str, Path]) -> None:
         "phash_max_distance_both_exif": 2,
         "phash_max_distance_both_exif_resized": 4,
         "copy_max_aspect_diff": 0.02,
+        "category_min_score": 0.3,
+        "burst_similarity": 0.92,
+        "burst_window_seconds": 10.0,
     }
     for entry in manifest["files"]:
         assert set(entry) == set(FILE_FIELDS)

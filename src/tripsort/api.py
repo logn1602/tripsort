@@ -29,9 +29,11 @@ from typing import Self
 
 from tripsort import __version__
 from tripsort._bench import peak_rss_bytes
+from tripsort.clip.bursts import BurstStats
+from tripsort.clip.categorize import CategoryStats
 from tripsort.clip.store import pending_clip_scans
-from tripsort.clip.types import CLIP_MODEL_ID, ImageEncoder
-from tripsort.config import Config, load_config
+from tripsort.clip.types import CLIP_MODEL_ID, ImageEncoder, TextEncoder
+from tripsort.config import OTHER, Config, load_config
 from tripsort.dedupe.copies import rebuild_copy_groups
 from tripsort.errors import ModelError, UserError, ZipError
 from tripsort.export.manifest import write_manifest
@@ -82,6 +84,8 @@ class AnalyzeResult:
     seconds: float = 0.0
     peak_rss_bytes: int | None = None
     folder: Path | None = None  # the project folder
+    categories: CategoryStats = field(default_factory=CategoryStats)
+    bursts: BurstStats = field(default_factory=BurstStats)
 
     def summary(self, project: str | None = None) -> str:
         """The summary. ``project`` is how its commands name the project folder, such as the
@@ -114,8 +118,33 @@ class AnalyzeResult:
                 f"{count(s.read_failures, 'zip entry', 'zip entries')} could not be read "
                 "(see the messages above and manifest.json)."
             )
+        lines.extend(_category_lines(self.categories, self.bursts))
         lines.extend(_people_lines(self.people, project))
         return "\n".join(lines)
+
+
+def _category_lines(c: CategoryStats, b: BurstStats) -> list[str]:
+    lines = []
+    if c.problem:
+        lines.append(f"Categories were not scored: {c.problem}")
+    elif c.scored:
+        sorted_into = [f"{n:,} {label}" for label, n in c.photos.items() if label != OTHER and n]
+        lines.append(
+            f"Sorted {count(c.scored, 'photo')} by category: "
+            f"{', '.join(sorted_into) if sorted_into else 'none fits one'}; "
+            f"{c.photos.get(OTHER, 0):,} other."
+        )
+    if c.not_embedded:
+        lines.append(
+            f"{count(c.not_embedded, 'photo')} without a CLIP embedding yet "
+            "(no category, no burst); `tripsort ingest` on this project embeds them."
+        )
+    if b.bursts:
+        lines.append(
+            f"Found {count(b.bursts, 'burst')} ({count(b.photos, 'photo')}); every shot stays "
+            "in all/."
+        )
+    return lines
 
 
 def _people_lines(p: PeopleStats, project: str) -> list[str]:
@@ -157,6 +186,7 @@ class Project:
         self._conn = conn
         self._faces: FaceAnalyzer | None = None
         self._clip: ImageEncoder | None = None
+        self._text: TextEncoder | None = None
         self.people = People(self)
 
     @classmethod
@@ -240,22 +270,49 @@ class Project:
         return result
 
     def analyze(self) -> AnalyzeResult:
-        """Resolve dates, find copies, and sort faces into people and shot types. Reads the
-        index only, never the zips."""
+        """Resolve dates, find copies, score categories, sort faces into people and shot
+        types, and group bursts. Reads the index only, never the zips; the text encoder
+        loads only for prompts whose embeddings are neither shipped nor cached."""
+        from tripsort.clip.bursts import analyze_bursts
+        from tripsort.clip.categorize import analyze_categories
         from tripsort.faces.analysis import analyze_people  # pulls in scikit-learn
 
         with self._run("analyze") as run:
             started = time.perf_counter()
             dates = resolve_dates(self._conn)
             rebuild_copy_groups(self._conn, self.config.thresholds)
-            with transaction(self._conn):
-                people = analyze_people(self._conn, self.config.people)
+            try:
+                with transaction(self._conn):
+                    # categories first: the shot types use their selfie hint
+                    categories = analyze_categories(self._conn, self.config, self.text_encoder)
+                    people = analyze_people(self._conn, self.config.people)
+                    bursts = analyze_bursts(self._conn, self.config.thresholds)
+            finally:
+                self._text = None  # the text encoder is only needed for new prompts
             set_meta(self._conn, "analysis_state", self._analysis_state())
             stats = project_stats(self._conn)
             run.items = stats.unique
         return AnalyzeResult(
-            stats, dates, people, time.perf_counter() - started, run.peak_rss_bytes, self.folder
+            stats,
+            dates,
+            people,
+            time.perf_counter() - started,
+            run.peak_rss_bytes,
+            self.folder,
+            categories,
+            bursts,
         )
+
+    def text_encoder(self, progress: Progress | None = None) -> "TextEncoder":
+        """The CLIP text encoder, for prompts tripsort does not ship; downloads on first use.
+
+        Raises ``ModelError`` when it cannot be downloaded.
+        """
+        if self._text is None:
+            from tripsort.clip import encoder
+
+            self._text = encoder.load_text_encoder(progress)
+        return self._text
 
     def export(
         self,

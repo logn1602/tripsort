@@ -45,7 +45,16 @@ def test_hash_is_stable() -> None:
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("[categories]\nx = 1\n", "unknown section [categories]"),
+        ("[bursts]\nx = 1\n", "unknown section [bursts]"),
+        ("[categories]\nx = 1\n", "[categories.x] must be a table"),
+        ("[categories.food]\nwords = []\n", "unknown key 'words'"),
+        ("[categories.food]\n", "needs a prompts list"),
+        ('[categories.food]\nprompts = ["ok", 3]\n', "must be a list of texts"),
+        ('[categories."a/b"]\nprompts = ["x"]\n', "must be 1 to 40 letters"),
+        ('[categories.Food]\nprompts = ["x"]\n', "'food' and 'Food' would share a folder"),
+        ("[categories.other]\nprompts = []\n", "[categories.other] needs at least one prompt"),
+        ("[people]\nselfie_prompts = []\n", "needs at least one prompt"),
+        ("[thresholds]\ncategory_min_score = 1.5\n", "must be between 0.0 and 1.0"),
         ("[thresholds]\nphash_max_distanse = 4\n", "unknown key 'phash_max_distanse'"),
         ("thresholds = 3\n", "[thresholds] must be a table"),
         ('[thresholds]\nphash_max_distance = "6"\n', "must be a whole number"),
@@ -74,6 +83,7 @@ def test_people_defaults_and_overrides(tmp_path: Path) -> None:
     assert (people.cluster_method, people.min_cluster_size, people.min_samples) == ("hdbscan", 4, 3)
     assert people.ref_min_similarity == 0.5
     assert people.suggest_min_similarity == 0.6
+    assert people.selfie_prompts[0] == "a selfie"
     assert (people.foreground_min_ratio, people.foreground_min_height) == (0.3, 0.03)
     folder = write_override(
         tmp_path, '[people]\ncluster_method = "agglomerative"\nattach_min_similarity = 1\n'
@@ -83,3 +93,23 @@ def test_people_defaults_and_overrides(tmp_path: Path) -> None:
     assert changed.people.attach_min_similarity == 1.0
     assert isinstance(changed.people.attach_min_similarity, float)
     assert changed.hash != load_config().hash
+
+
+def test_categories_can_be_added_changed_and_dropped(tmp_path: Path) -> None:
+    defaults = load_config().categories
+    assert list(defaults) == ["scenery", "animals", "food", "documents", "other"]
+    assert defaults["scenery"][0] == "a landscape photo"
+    folder = write_override(
+        tmp_path,
+        "[categories.food]\n"
+        'prompts = ["a  photo of   pasta"]\n'
+        "[categories.documents]\n"
+        "prompts = []\n"
+        "[categories.Night_sky]\n"
+        'prompts = ["the stars at night", "the moon"]\n',
+    )
+    changed = load_config(folder).categories
+    assert list(changed) == ["scenery", "animals", "food", "other", "Night_sky"]
+    assert changed["food"] == ("a photo of pasta",)  # spaces tidied
+    assert changed["Night_sky"] == ("the stars at night", "the moon")
+    assert load_config(folder).hash != load_config().hash

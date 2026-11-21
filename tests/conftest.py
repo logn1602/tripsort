@@ -67,6 +67,14 @@ def color_clip(monkeypatch: pytest.MonkeyPatch) -> ColorImageEncoder:
 
 
 @pytest.fixture
+def word_text(monkeypatch: pytest.MonkeyPatch) -> WordTextEncoder:
+    """The fake text encoder (see fake_clip.py), kept so a test can see what it embedded."""
+    encoder = WordTextEncoder()
+    monkeypatch.setattr(tripsort.clip.encoder, "load_text_encoder", lambda progress=None: encoder)
+    return encoder
+
+
+@pytest.fixture
 def project(tmp_path: Path) -> Iterator[Project]:
     with Project.open(tmp_path / "sorted") as proj:
         yield proj

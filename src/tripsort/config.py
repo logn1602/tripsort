@@ -1,12 +1,14 @@
 """Configuration: the packaged ``default_config.toml``, overridden by ``tripsort.toml``.
 
 The project file may only set keys that exist in the defaults, so a typo is an error
-instead of a silently ignored setting.
+instead of a silently ignored setting. Categories are the exception: ``[categories.<name>]``
+tables may add categories as well as change them, and an empty ``prompts`` list drops one.
 """
 
 import dataclasses
 import hashlib
 import json
+import re
 import tomllib
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -18,6 +20,9 @@ from tripsort.errors import ConfigError
 
 PROJECT_CONFIG_NAME = "tripsort.toml"
 CLUSTER_METHODS = ("hdbscan", "agglomerative")
+OTHER = "other"  # the category of photos no other category claims; it gets no folder
+# A category name is its folder name: letters, digits, spaces, dashes, and underscores.
+_CATEGORY_NAME = re.compile(r"^[^\W_][\w -]{0,39}$")
 
 # Allowed range for each numeric setting, inclusive.
 _RANGES: dict[str, tuple[float, float]] = {
@@ -36,6 +41,10 @@ _RANGES: dict[str, tuple[float, float]] = {
     "ref_min_similarity": (-1.0, 1.0),
     "background_min_similarity": (-1.0, 1.0),
     "suggest_min_similarity": (-1.0, 1.0),
+    "selfie_min_score": (0.0, 1.0),
+    "category_min_score": (0.0, 1.0),
+    "burst_similarity": (-1.0, 1.0),
+    "burst_window_seconds": (0.0, 3600.0),
 }
 # Allowed values for each text setting.
 _CHOICES: dict[str, tuple[str, ...]] = {"cluster_method": CLUSTER_METHODS}
@@ -49,6 +58,9 @@ class Thresholds:
     phash_max_distance_both_exif: int
     phash_max_distance_both_exif_resized: int
     copy_max_aspect_diff: float
+    category_min_score: float
+    burst_similarity: float
+    burst_window_seconds: float
 
 
 @dataclass(frozen=True)
@@ -67,6 +79,9 @@ class PeopleSettings:
     ref_min_similarity: float
     background_min_similarity: float
     suggest_min_similarity: float
+    selfie_min_score: float
+    selfie_prompts: tuple[str, ...]
+    not_selfie_prompts: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -75,6 +90,7 @@ class Config:
 
     thresholds: Thresholds
     people: PeopleSettings
+    categories: dict[str, tuple[str, ...]]  # name -> prompts, in config order; has OTHER
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -101,6 +117,7 @@ def load_config(project_dir: Path | None = None) -> Config:
             except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
                 raise ConfigError(f"{path}: {exc}") from exc
             _merge(data, override, path)
+            return _build(data, str(path))
     return _build(data, "the default config")
 
 
@@ -110,6 +127,9 @@ def _merge(data: dict[str, Any], override: dict[str, Any], path: Path) -> None:
             raise ConfigError(f"{path}: unknown section [{table}]")
         if not isinstance(values, dict):
             raise ConfigError(f"{path}: [{table}] must be a table")
+        if table == "categories":
+            _merge_categories(data[table], values, path)
+            continue
         for key, value in values.items():
             if key not in data[table]:
                 raise ConfigError(f"{path}: unknown key '{key}' in [{table}]")
@@ -117,7 +137,32 @@ def _merge(data: dict[str, Any], override: dict[str, Any], path: Path) -> None:
             data[table][key] = value
 
 
+def _merge_categories(categories: dict[str, Any], override: dict[str, Any], path: Path) -> None:
+    """``[categories.<name>]`` replaces that category's prompts, or adds the category."""
+    for name, table in override.items():
+        where = f"{path}: [categories.{name}]"
+        if not isinstance(table, dict):
+            raise ConfigError(f"{where} must be a table with a prompts list")
+        for key in table:
+            if key != "prompts":
+                raise ConfigError(f"{where}: unknown key '{key}' (only prompts)")
+        if "prompts" not in table:
+            raise ConfigError(f"{where} needs a prompts list (an empty one drops the category)")
+        _check_prompts(f"{where} prompts", table["prompts"])
+        categories[name] = {"prompts": table["prompts"]}
+
+
+def _check_prompts(where: str, value: Any) -> None:
+    if not isinstance(value, list) or not all(isinstance(p, str) and p.strip() for p in value):
+        raise ConfigError(f"{where} must be a list of texts, got {value!r}")
+
+
 def _check_value(where: str, key: str, value: Any, default: Any) -> None:
+    if isinstance(default, list):
+        _check_prompts(where, value)
+        if not value:
+            raise ConfigError(f"{where} needs at least one prompt")
+        return
     if isinstance(default, str):
         choices = _CHOICES[key]
         if value not in choices:
@@ -136,16 +181,53 @@ def _check_value(where: str, key: str, value: Any, default: Any) -> None:
 
 
 def _section(cls: Any, values: dict[str, Any]) -> Any:
-    """Build a settings dataclass, converting each value to its field's type (int, float, str)."""
+    """Build a settings dataclass, converting each value to its field's type (int, float,
+    str; prompt lists become tuples of tidied texts)."""
     convert = {f.name: cast(Callable[[Any], Any], f.type) for f in dataclasses.fields(cls)}
-    return cls(**{name: to_type(values[name]) for name, to_type in convert.items()})
+    return cls(
+        **{
+            name: _prompts(values[name])
+            if isinstance(values[name], list)
+            else to_type(values[name])
+            for name, to_type in convert.items()
+        }
+    )
+
+
+def _prompts(texts: list[str]) -> tuple[str, ...]:
+    return tuple(" ".join(text.split()) for text in texts)
+
+
+def _categories(data: dict[str, Any], where: str) -> dict[str, tuple[str, ...]]:
+    """Each category with prompts, in config order. Names must be safe folder names, and two
+    may not differ only in case, since they would share a folder."""
+    categories: dict[str, tuple[str, ...]] = {}
+    folders: dict[str, str] = {}
+    for name, table in data.items():
+        prompts = _prompts(table.get("prompts", []))
+        if not prompts and name != OTHER:
+            continue  # an empty list drops the category
+        if not _CATEGORY_NAME.match(name):
+            raise ConfigError(
+                f"{where}: category {name!r} must be 1 to 40 letters, digits, spaces, dashes, "
+                "or underscores, starting with a letter or digit"
+            )
+        if (same := folders.get(name.casefold())) is not None:
+            raise ConfigError(f"{where}: categories {same!r} and {name!r} would share a folder")
+        folders[name.casefold()] = name
+        categories[name] = prompts
+    if not categories.get(OTHER):
+        raise ConfigError(f"{where}: [categories.{OTHER}] needs at least one prompt")
+    return categories
 
 
 def _build(data: dict[str, Any], where: str) -> Config:
+    categories = _categories(data["categories"], where)
     try:
         return Config(
             thresholds=_section(Thresholds, data["thresholds"]),
             people=_section(PeopleSettings, data["people"]),
+            categories=categories,
         )
     except (KeyError, TypeError, ValueError) as exc:  # pragma: no cover - packaged file is tested
         raise ConfigError(f"{where} is missing or has a bad value: {exc}") from exc
