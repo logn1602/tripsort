@@ -100,10 +100,12 @@ CLIP_VOCAB = ModelFile(
     purpose="the text encoder's tokenizer vocabulary",
 )
 
-# The image encoder ingest uses. TRIPSORT_CLIP_IMAGE=fp32 or int8 picks one explicitly; a
-# different encoder means a new CLIP model id, so the next ingest embeds every photo again.
+# The image encoder ingest uses: int8 by default (it scored like fp32 on the labeled trip with
+# the default settings, at a quarter of the download, less memory, and faster);
+# TRIPSORT_CLIP_IMAGE=fp32 picks full precision. A different encoder means a new CLIP model
+# id, so the next ingest embeds every photo again.
 CLIP_IMAGE_ENV = "TRIPSORT_CLIP_IMAGE"
 _CLIP_IMAGES = {"fp32": CLIP_IMAGE_FP32, "int8": CLIP_IMAGE_INT8}
-CLIP_IMAGE = _CLIP_IMAGES.get(os.environ.get(CLIP_IMAGE_ENV, "").strip().lower(), CLIP_IMAGE_FP32)
+CLIP_IMAGE = _CLIP_IMAGES.get(os.environ.get(CLIP_IMAGE_ENV, "").strip().lower(), CLIP_IMAGE_INT8)
 CLIP_TEXT_MODELS = (CLIP_TEXT, CLIP_VOCAB)
 ALL_MODELS = (*FACE_MODELS, CLIP_IMAGE, *CLIP_TEXT_MODELS)

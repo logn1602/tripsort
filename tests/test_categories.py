@@ -35,6 +35,7 @@ prompts = ["documents"]
 [categories.other]
 prompts = ["anything"]
 [people]
+selfie_min_score = 0.8
 selfie_prompts = ["selfie"]
 not_selfie_prompts = ["anything"]
 """

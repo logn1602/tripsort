@@ -33,9 +33,10 @@ def is_selfie(
     min_score: float = 1.0,
 ) -> bool:
     """A selfie shows a foreground face and was taken with the front camera. When the lens
-    model does not say, CLIP's selfie share (0 to 1) must reach ``min_score``."""
+    model does not say, CLIP's selfie share (0 to 1) must reach ``min_score``; a
+    ``min_score`` of 1 or more turns that hint off."""
     if foreground_faces <= 0:
         return False
     if front_camera is not None:
         return front_camera
-    return clip_selfie is not None and clip_selfie >= min_score
+    return clip_selfie is not None and min_score < 1.0 and clip_selfie >= min_score

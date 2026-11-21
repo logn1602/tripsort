@@ -43,6 +43,7 @@ _RANGES: dict[str, tuple[float, float]] = {
     "suggest_min_similarity": (-1.0, 1.0),
     "selfie_min_score": (0.0, 1.0),
     "category_min_score": (0.0, 1.0),
+    "category_face_height": (0.0, 1.0),
     "burst_similarity": (-1.0, 1.0),
     "burst_window_seconds": (0.0, 3600.0),
 }
@@ -59,6 +60,7 @@ class Thresholds:
     phash_max_distance_both_exif_resized: int
     copy_max_aspect_diff: float
     category_min_score: float
+    category_face_height: float
     burst_similarity: float
     burst_window_seconds: float
 

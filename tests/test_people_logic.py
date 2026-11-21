@@ -95,6 +95,10 @@ def test_shot_types_and_selfies() -> None:
     assert not is_selfie(True, 0)
     assert not is_selfie(None, 2)
     assert not is_selfie(False, 1)
+    assert is_selfie(None, 1, 0.9, 0.8)  # the CLIP hint, when the lens model is silent
+    assert not is_selfie(None, 1, 0.9, 0.95)
+    assert not is_selfie(None, 1, 1.0, 1.0)  # 1.0 turns the hint off
+    assert not is_selfie(False, 1, 1.0, 0.5)  # the lens model wins
 
 
 # names
