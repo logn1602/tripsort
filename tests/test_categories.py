@@ -317,3 +317,24 @@ def test_bursts_end_to_end(tmp_path: Path, color_clip: ColorImageEncoder) -> Non
             "other_phone.jpg": None,
         }
         assert (manifest["summary"]["bursts"], manifest["summary"]["photos_in_bursts"]) == (1, 3)
+
+
+def test_a_photo_about_its_people_is_other(
+    tmp_path: Path,
+    color_clip: ColorImageEncoder,
+    word_text: WordTextEncoder,
+    marker_faces: MarkerFaceAnalyzer,
+) -> None:
+    image = painted("scenery", 1)
+    ImageDraw.Draw(image).rectangle((300, 200, 450, 350), fill=marker_color(1))  # a face, 25%
+    trip = make_zip(tmp_path / "t.zip", [("friend_at_the_lake.jpg", jpeg(image))])
+    with project_with(tmp_path, FAKE_CATEGORIES) as project:  # the default face cutoff: 3%
+        project.ingest([trip])
+        assert project.analyze().categories.photos["other"] == 1
+        shares = dict(project.connection.execute("SELECT label, score FROM categories").fetchall())
+        assert shares["scenery"] > 0.9  # CLIP still sees the view; only the category changes
+    (tmp_path / "sorted" / "tripsort.toml").write_text(
+        FAKE_CATEGORIES + "[thresholds]\ncategory_face_height = 0.0\n", encoding="utf-8"
+    )
+    with Project.open(tmp_path / "sorted") as off:
+        assert off.analyze().categories.photos["scenery"] == 1

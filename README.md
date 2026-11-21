@@ -2,10 +2,11 @@
 
 Offline Python library + CLI that merges trip photo zips, removes duplicates, and sorts photos by person, shot type, and category.
 
-> **Status: alpha (0.1.0).** This version reads your zips, removes exact duplicates and
-> recompressed copies (such as WhatsApp copies), finds everyone's faces, and exports one clean
-> folder plus a folder per person and per shot type (solo, group, selfie), with a
-> `manifest.json`. Sorting by category and culling bursts come in later releases.
+> **Status: alpha (0.2.0).** This version reads your zips, removes exact duplicates and
+> recompressed copies (such as WhatsApp copies), finds everyone's faces, sorts photos into
+> categories (scenery, animals, food, documents), groups bursts, and exports one clean folder
+> plus a folder per person, shot type (solo, group, selfie), and category, with a
+> `manifest.json`. Culling bursts down to the best shot comes in a later release.
 
 ## What it does
 
@@ -14,11 +15,12 @@ After a group trip, everyone has a zip of photos from their own phone. tripsort 
 - merges them into one pool and removes exact duplicates and recompressed copies (such as WhatsApp copies), keeping the best original;
 - groups faces by person across every zip, so each friend gets a folder with every photo they appear in, named from one reference photo per friend;
 - splits shots into solo, group, and selfie, ignoring strangers in the background;
+- sorts photos into categories such as scenery, animals, food, and documents, defined as editable text prompts;
+- groups bursts, several shots of one moment, so the best one can be picked later;
 - exports plain folders plus a `manifest.json`, and never modifies the input zips.
 
 Planned for later releases:
 
-- sorts photos into categories such as scenery, animals, food, and documents, defined as editable text prompts;
 - culls bursts down to the best shot and flags blurry, dark, or eyes-closed photos without deleting anything.
 
 Everything runs locally on an ordinary laptop CPU: no account, no cloud uploads, no telemetry.
@@ -44,6 +46,7 @@ sorted/
 ├── all/             every kept file, once: 20260714_102345_sam_IMG_0412.jpg
 ├── people/          a folder per person: alex/, sam/, person_03/, ...
 ├── shots/           solo/, group/, selfie/
+├── categories/      scenery/, animals/, food/, documents/ (other photos get no folder)
 ├── unreadable/      files whose bytes could be read but not decoded, for review
 ├── duplicates/      only with --export-duplicates: each kept file next to its copies
 ├── manifest.json    every file, where it came from, and what tripsort decided
@@ -63,10 +66,10 @@ The steps can also run one at a time:
 
 ```console
 tripsort ingest  sorted/ mine.zip sam.zip    # read the zips, decode each new file once
-tripsort analyze sorted/ [--refs refs/]      # dates, duplicates, people: the index only
+tripsort analyze sorted/ [--refs refs/]      # dates, duplicates, people, categories: the index only
 tripsort export  sorted/ [--dry-run] [--export-duplicates] [--copy]
 tripsort people  list|review|rename|merge|dismiss sorted/ ...
-tripsort models  list|download               # the face models (downloaded on first use)
+tripsort models  list|download               # the face and CLIP models (downloaded on first use)
 tripsort clean   sorted/                     # delete the index and review pages, keep the export
 ```
 
@@ -159,7 +162,9 @@ person_02, and so on, most photos first.
   never changes the shot type.
 - **Shot types.** `shots/solo/` holds photos with one foreground face, `shots/group/` two or
   more. `shots/selfie/` holds photos taken with a front camera, as iPhones record in their
-  EXIF; phones that record no lens model are not detected as selfies yet.
+  EXIF. Photos whose lens model does not say which camera took them are not selfies: CLIP's
+  selfie hint (`selfie_min_score`) can be turned on, but on a labeled trip it only added
+  photos that were not selfies, so it is off by default.
 
 Known limits: lookalike siblings and children who change fast can be merged or split, and
 very different looks of one friend (sunglasses, side profiles) can become two people; review
@@ -174,6 +179,54 @@ tripsort works offline. `tripsort models download` fetches them ahead of time. W
 (offline on the first run), tripsort still removes duplicates and exports `all/`, exits with
 2, and the next `tripsort ingest sorted/` scans the photos it missed. Licenses are in
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md): YuNet is MIT, SFace is Apache-2.0.
+
+## Categories and bursts
+
+tripsort describes every photo with CLIP ViT-B/32, a model that places photos and short
+texts in one space, so a photo can be compared with a text prompt. It does so in the same
+pass that finds faces, and keeps the result in the index.
+
+- **Categories.** A photo's score for a category is its average similarity to the category's
+  prompts, and a softmax over every category and `other` turns the scores into shares that
+  add up to 1. The top category is the photo's category when its share is at least
+  `category_min_score` (0.3); otherwise the photo is `other`. A photo whose largest counted
+  face is at least `category_face_height` (3%) of its height is about its people, so it is
+  `other` too: scenery means the view itself is the subject. `categories/<name>/` holds each
+  category's photos as hardlinks into `all/`; `other` gets no folder. Every share is in
+  `manifest.json`, so a new threshold needs no CLIP at all.
+- **Your own categories.** Add a category, change its prompts, or drop one with an empty
+  list in `sorted/tripsort.toml`:
+
+  ```toml
+  [categories.boats]
+  prompts = ["a photo of a boat", "a sailboat on the water"]
+
+  [categories.documents]
+  prompts = []                     # no documents/ folder
+  ```
+
+  Write prompts in English, the language CLIP learned from. The embeddings of the default
+  prompts ship with tripsort; a new prompt is embedded once by CLIP's text encoder, which
+  downloads (254 MB) the first time a prompt needs it.
+- **Bursts.** Shots from one camera at most `burst_window_seconds` (10) after a burst's first
+  shot, and at least `burst_similarity` (0.92) alike, form a burst; only EXIF and file name
+  times count. Every shot stays in `all/`, `manifest.json` gives each photo's burst number,
+  and a later release will pick the best shot of each burst.
+
+On the labeled trip used to tune the defaults (692 photos, most of them of people), the
+half used for tuning gave scenery 92% precision at 55% recall and food 100% precision at 80%
+recall, with no photo wrongly put in animals or documents. A view with friends in it goes to
+`other` on purpose; check the folders before sharing them.
+
+### CLIP models
+
+The image encoder (95.5 MB, int8) downloads the first time photos are read, from a release of
+this repository that holds model files only, and is used only when its SHA-256 matches.
+`TRIPSORT_CLIP_IMAGE=fp32` picks the full-precision encoder (351.5 MB), which scored the same
+on the labeled trip but is slower; a different encoder embeds every photo again on the next
+ingest. Without the model, tripsort still removes duplicates, sorts people, and exports,
+exits with 2, and the next `tripsort ingest sorted/` embeds the photos it missed. CLIP's
+OpenAI weights are MIT licensed; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 ## Dates and file names
 
@@ -202,8 +255,8 @@ re-creating the zip.
 - tripsort only removes files it wrote itself, for example a copy replaced by a better
   original, or `duplicates/` when you export without `--export-duplicates`. It never
   overwrites or deletes a file it did not write.
-- On drives without hardlinks (exFAT, FAT32), `people/`, `shots/`, and `duplicates/` hold
-  copies; `--copy` forces that.
+- On drives without hardlinks (exFAT, FAT32), `people/`, `shots/`, `categories/`, and
+  `duplicates/` hold copies; `--copy` forces that.
 - A renamed or merged person's links move to their new folder on the next export.
 
 ## Configuration
@@ -217,6 +270,10 @@ phash_max_distance = 6                   # at least one of the two files has no 
 phash_max_distance_both_exif = 2         # both have EXIF capture times (which must match), same size
 phash_max_distance_both_exif_resized = 4 # the same, but the pixel sizes differ (bursts never do)
 copy_max_aspect_diff = 0.02             # largest relative difference in width / height
+category_min_score = 0.30               # a photo's top category needs this share, else it is other
+category_face_height = 0.03             # a face this tall (share of the height) makes it other; 0: off
+burst_similarity = 0.92                 # CLIP similarity each shot of a burst needs to its first shot
+burst_window_seconds = 10.0             # the most a burst's shots may come after its first
 ```
 
 The people settings live in their own table; the defaults and what each one does are in
@@ -231,7 +288,10 @@ cluster_method = "hdbscan"       # or "agglomerative"
 min_cluster_size = 4             # fewer faces than this never form a person
 ref_min_similarity = 0.5         # a refs/ photo names the most similar person if this close
 suggest_min_similarity = 0.6     # suggest merging an unnamed person into a named one this close
+selfie_min_score = 1.0           # CLIP's selfie hint for photos whose lens model is silent; 1.0: off
 ```
+
+Categories are `[categories.<name>]` tables with a `prompts` list (see Categories and bursts).
 
 For a small trip where a friend is in only 3 photos, set `min_cluster_size = 3`. Raising
 it splits people less on big trips but drops friends with few photos.
@@ -245,22 +305,23 @@ Changing a threshold needs no re-reading of the zips: faces are found once, at i
 | --- | --- |
 | 0 | Success |
 | 1 | User error: a missing or invalid zip, a bad config value, a bad command line |
-| 2 | Partial success: some files could not be read or decoded (listed in the summary and in `manifest.json`), or some photos could not be scanned for faces (for example, the face models could not be downloaded) |
+| 2 | Partial success: some files could not be read or decoded (listed in the summary and in `manifest.json`), or some photos could not be scanned for faces or embedded with CLIP (for example, the models could not be downloaded) |
 
 ## Privacy
 
-Everything runs locally. The only network access is the one-time download of the two face
-models from GitHub; no photo, face, or name ever leaves your computer.
+Everything runs locally. The only network access is the one-time download of the face and
+CLIP models from GitHub; no photo, face, or name ever leaves your computer.
 
 - The index (`sorted/.tripsort/index.db`) stores file hashes, EXIF dates, camera make and
   model, GPS coordinates, where each zip was found on disk, every face's position and
-  embedding (128 numbers that identify a face), the names you gave, and the embeddings of
-  your `refs/` photos. `review/people.html` shows face crops. `tripsort clean sorted/`
-  deletes both; the exported folders stay.
+  embedding (128 numbers that identify a face), a CLIP embedding per photo (512 numbers that
+  describe what it shows), the names you gave, and the embeddings of your `refs/` photos.
+  `review/people.html` shows face crops. `tripsort clean sorted/` deletes both; the exported
+  folders stay.
 - `manifest.json` has no GPS data, no absolute paths (zips appear by file name only), and no
   face positions or embeddings, so the output folder can be shared without them. It does
-  name the people in each photo, as the `people/` folders do. The photos themselves still
-  carry whatever EXIF they came with.
+  name the people in each photo, as the `people/` folders do, and gives each photo's
+  category shares and burst. The photos themselves still carry whatever EXIF they came with.
 - Ask your friends before sending them their folders or labeling their faces.
 
 ## Development
@@ -279,9 +340,15 @@ uv run pre-commit install            # optional: run the checks on every commit
 
 CI runs the tests, linters, and type checks on Windows, macOS, and Linux with Python 3.11 to 3.13,
 and runs a tiny zip through `tripsort run` from the built wheel. Tests marked `models` use the
-real face models on three public-domain paintings (see `tests/fixtures/README.md`); they run
-when the models are downloaded (`uv run tripsort models download`), as in CI, and are skipped
-otherwise. Every other test uses a stand-in face detector and needs no models or network.
+real face and CLIP models on public-domain paintings and photos (see `tests/fixtures/README.md`);
+they run when the models are downloaded (`uv run tripsort models download`), as in CI, and are
+skipped otherwise. Every other test uses stand-in models and needs no network.
+
+The CLIP files are exported to ONNX by `tools/export_clip.py` and made int8 by
+`tools/quantize.py` (both bring their own torch and open_clip; tripsort never depends on
+them), run by the `export models` workflow, which puts them on a GitHub pre-release of this
+repository; `src/tripsort/models/registry.py` pins their SHA-256. When the default prompts
+change, `uv run tools/embed_default_prompts.py` embeds them again (a test fails until then).
 
 ### Measuring dedupe
 
@@ -331,6 +398,40 @@ photo (the same file, a near copy by pHash, or nearly the same face) and print t
 giving any flagged photo by position. Only numbers are printed, with people shown as p1,
 p2, ...; `WORK` keeps the index between runs, so later runs only analyze. Delete `WORK`
 when done.
+
+### Measuring categories
+
+The `category` column of the same `labels.csv` scores categories, and a second set with no
+people (food, animals, screenshots, tickets) can be labeled for categories alone:
+
+```console
+uv run eval/run_eval.py categories [--split dev|test] [--config PROMPTS.toml] [--mistakes]
+uv run eval/run_eval.py prelabel   --labeled-set DIR --categories-only   # labels.html: category buttons only
+uv run eval/run_eval.py categories --labeled-set DIR [--split dev|test]
+```
+
+`categories` prints precision, recall, and F1 per category, the confusion matrix, macro F1
+over the categories with labeled photos, the photos put in a category nobody labeled any
+photo with (each a wrong photo), the selfie hint on labeled selfies and on free labels
+(photos whose lens model names the camera, scored with the hint alone), and a survey of the
+set's bursts. `--config` tries a prompt set without editing anything. `--mistakes` writes
+`category_mistakes.html`, the dev rows it got wrong with their photos, into the labeled set's
+folder, never the repository: it shows your photos. `--labeled-set` reads a flat folder of
+photos as well as one subfolder per phone. The image encoder is the default one;
+`TRIPSORT_CLIP_IMAGE=int8` or `fp32` compares them on the same index.
+
+### Measuring bursts
+
+```console
+uv run tools/make_synthetic_copies.py OUT_DIR --bursts --generate 60       # or --from PHOTO_DIR
+uv run eval/run_eval.py bursts OUT_DIR [--write-baseline]
+```
+
+Each moment is a photo, two burst shots of it one and two seconds later (a camera that moved
+slightly), and the next photo four seconds after on the same camera, a different shot that
+must not join. `bursts` prints pairwise precision and recall, the burst shots missed, the
+neighbors that joined, and how alike CLIP finds each to the first shot. Generated photos all
+look alike to CLIP, so only real photos (`--from`) say much about precision.
 
 ### Releasing
 
