@@ -25,6 +25,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(skip)
 
 
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """Show the lines tests leave with ``record_property("summary", ...)``, such as how close
+    the int8 image encoder came to fp32 on this CPU."""
+    for outcome in ("passed", "failed"):
+        for report in terminalreporter.stats.get(outcome, []):
+            for name, value in getattr(report, "user_properties", ()):
+                if name == "summary":
+                    terminalreporter.write_line(str(value))
+
+
 @pytest.fixture(autouse=True)
 def _no_real_models(
     request: pytest.FixtureRequest,

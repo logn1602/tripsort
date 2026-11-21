@@ -349,6 +349,9 @@ The CLIP files are exported to ONNX by `tools/export_clip.py` and made int8 by
 them), run by the `export models` workflow, which puts them on a GitHub pre-release of this
 repository; `src/tripsort/models/registry.py` pins their SHA-256. When the default prompts
 change, `uv run tools/embed_default_prompts.py` embeds them again (a test fails until then).
+Every CI runner also checks its int8 image embeddings of the public photos against fp32 ones
+(`uv run tools/embed_public_sample.py` writes those): ONNX Runtime's int8 math takes another
+path on CPUs without VNNI.
 
 ### Measuring dedupe
 

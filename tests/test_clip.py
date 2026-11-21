@@ -1,10 +1,14 @@
 """CLIP: the tokenizer, the preprocessing, and embedding photos at ingest.
 
 Tests marked `models` use the real (cached) model files and compare them with what open_clip
-gives (tests/fixtures/clip/, written by tools/export_clip.py).
+gives (tests/fixtures/clip/, written by tools/export_clip.py), and the int8 image encoder
+with the fp32 one (tests/fixtures/clip/public_fp32.json, from tools/embed_public_sample.py).
 """
 
 import json
+import platform
+import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -19,11 +23,19 @@ from tripsort.api import Project
 from tripsort.cli import app
 from tripsort.clip import tokenizer
 from tripsort.clip.preprocess import MEAN, STD, clip_input
-from tripsort.clip.types import BATCH_SIZE, CLIP_MODEL_ID, IMAGE_SIZE, unit_rows
+from tripsort.clip.prompts import decode_vector
+from tripsort.clip.types import BATCH_SIZE, CLIP_MODEL_ID, IMAGE_SIZE, image_model_id, unit_rows
 from tripsort.errors import ModelError
 from tripsort.ingest.decode import decode_oriented
 
 FIXTURES = Path(__file__).parent / "fixtures"
+PUBLIC_SAMPLE = FIXTURES / "categories"
+PUBLIC_FP32 = FIXTURES / "clip" / "public_fp32.json"
+
+# The lowest cosine similarity allowed between a public photo's int8 and fp32 embeddings. The
+# dev laptop, whose CPU has VNNI, gets 0.979 at the lowest. ONNX Runtime's int8 math takes
+# another path on CPUs without VNNI, where it can saturate, so every CI runner checks its own.
+INT8_FLOOR = 0.97
 
 
 def solid(rgb: tuple[int, int, int], size: tuple[int, int] = (640, 480)) -> bytes:
@@ -204,6 +216,63 @@ def test_the_image_encoders_match_open_clip_on_the_paintings() -> None:
     for model, floor in ((CLIP_IMAGE_FP32, 0.999), (CLIP_IMAGE_INT8, 0.98)):
         got = load_image_encoder(model=model).embed(batch)
         assert float((got * want).sum(axis=1).min()) >= floor, model.name
+
+
+def cpu_name() -> str:
+    """This CPU's name for the test log, since int8 math depends on it (and on Linux, whether
+    it has VNNI)."""
+    try:
+        if platform.system() == "Linux":
+            lines = Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines()
+            name = next(line.split(":", 1)[1].strip() for line in lines if "model name" in line)
+            flags = next((line for line in lines if line.startswith("flags")), "")
+            return f"{name}, VNNI {'yes' if 'vnni' in flags else 'no'}"
+        if platform.system() == "Windows":
+            import winreg
+
+            key = r"HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as cpu:
+                return str(winreg.QueryValueEx(cpu, "ProcessorNameString")[0]).strip()
+        if platform.system() == "Darwin":
+            brand = ["sysctl", "-n", "machdep.cpu.brand_string"]
+            return subprocess.run(brand, capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, StopIteration, subprocess.SubprocessError):
+        pass
+    return platform.machine()
+
+
+def test_the_fp32_references_cover_the_public_sample() -> None:
+    """Fails when the sample changes without `uv run tools/embed_public_sample.py`."""
+    refs = json.loads(PUBLIC_FP32.read_text(encoding="utf-8"))
+    photos = [p.relative_to(PUBLIC_SAMPLE).as_posix() for p in PUBLIC_SAMPLE.rglob("*.jpg")]
+    assert sorted(refs["embeddings"]) == sorted(photos)
+
+
+@pytest.mark.models
+def test_int8_embeddings_stay_close_to_fp32_on_this_cpu(
+    record_property: Callable[[str, object], None],
+) -> None:
+    from tripsort.clip.encoder import load_image_encoder
+    from tripsort.models.registry import CLIP_IMAGE_FP32, CLIP_IMAGE_INT8
+
+    refs = json.loads(PUBLIC_FP32.read_text(encoding="utf-8"))
+    assert refs["model_id"] == image_model_id(CLIP_IMAGE_FP32)
+    encoder = load_image_encoder(model=CLIP_IMAGE_INT8)
+    names = sorted(refs["embeddings"])
+    cosines = []
+    for name in names:
+        # one photo per call: int8 picks one activation scale per batch, so batchmates move
+        # a photo's embedding too
+        pixels = clip_input(decode_oriented((PUBLIC_SAMPLE / name).read_bytes()))
+        vector = encoder.embed(pixels[np.newaxis])[0]
+        cosines.append(float(vector @ decode_vector(refs["embeddings"][name])))
+    worst = int(np.argmin(cosines))
+    record_property(
+        "summary",
+        f"int8 against fp32 on this CPU ({cpu_name()}): lowest cosine {cosines[worst]:.4f}, "
+        f"mean {np.mean(cosines):.4f}, floor {INT8_FLOOR}",
+    )
+    assert cosines[worst] >= INT8_FLOOR, f"{names[worst]}: {cosines[worst]:.4f}"
 
 
 @pytest.mark.models

@@ -25,6 +25,15 @@ SFace embeds flipped, cropped, darkened, brightened, and shrunk copies of a pain
 the original and far from the other paintings; and `tripsort run` sorts such copies into one
 people folder per painting and names the folders from a refs folder.
 
+## clip/
+
+Reference outputs for the CLIP tests. `tokens.json` and `paintings.json` come from open_clip
+(`tools/export_clip.py`): the token ids of sample texts, and the embeddings of the three
+paintings. `public_fp32.json` holds the fp32 image encoder's embeddings of the `categories/`
+photos, made on the dev laptop with `uv run tools/embed_public_sample.py` (run it again when
+those photos change); every CI runner checks its int8 embeddings of the same photos against
+them.
+
 ## categories/
 
 Photos, scans, and screenshots with no people in them, in one folder per category, for
