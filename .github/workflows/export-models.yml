@@ -8,13 +8,7 @@ name: export models
 # exists is never changed; a new export needs a new tag.
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [phase-4-categories-bursts]
-    paths:
-      - tools/export_clip.py
-      - tools/quantize.py
-      - .github/workflows/export-models.yml
+  workflow_dispatch: # run by hand; a new export needs a new tag (TAG below)
 
 permissions: {}
 
