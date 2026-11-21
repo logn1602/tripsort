@@ -4,6 +4,7 @@ Weights never ship in the wheel. Each URL is pinned to a commit or to a release 
 never changed, and a download is only used once its size and SHA-256 match the values here.
 """
 
+import os
 from dataclasses import dataclass
 
 OPENCV_ZOO_COMMIT = "eb9f4f2d4b79b58e5513b5d25d5f0243a8357bf4"
@@ -99,6 +100,10 @@ CLIP_VOCAB = ModelFile(
     purpose="the text encoder's tokenizer vocabulary",
 )
 
-CLIP_IMAGE = CLIP_IMAGE_FP32  # the image encoder ingest uses (the int8 trial decides)
+# The image encoder ingest uses. TRIPSORT_CLIP_IMAGE=fp32 or int8 picks one explicitly; a
+# different encoder means a new CLIP model id, so the next ingest embeds every photo again.
+CLIP_IMAGE_ENV = "TRIPSORT_CLIP_IMAGE"
+_CLIP_IMAGES = {"fp32": CLIP_IMAGE_FP32, "int8": CLIP_IMAGE_INT8}
+CLIP_IMAGE = _CLIP_IMAGES.get(os.environ.get(CLIP_IMAGE_ENV, "").strip().lower(), CLIP_IMAGE_FP32)
 CLIP_TEXT_MODELS = (CLIP_TEXT, CLIP_VOCAB)
 ALL_MODELS = (*FACE_MODELS, CLIP_IMAGE, *CLIP_TEXT_MODELS)

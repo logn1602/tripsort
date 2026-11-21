@@ -370,6 +370,7 @@ class Project:
             "SELECT (SELECT COUNT(*) FROM media), (SELECT COALESCE(MAX(id), 0) FROM media), "
             "(SELECT COUNT(*) FROM occurrences), (SELECT COUNT(*) FROM sources), "
             "(SELECT COUNT(*) FROM face_scans), (SELECT COALESCE(MAX(id), 0) FROM faces), "
+            "(SELECT COUNT(*) FROM clip_scans), "
             "(SELECT COALESCE(GROUP_CONCAT(relpath || ':' || sha256, '|'), '') "
             " FROM (SELECT relpath, sha256 FROM ref_images ORDER BY relpath))"
         ).fetchone()
