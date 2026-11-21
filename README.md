@@ -215,7 +215,7 @@ pass that finds faces, and keeps the result in the index.
 
 On the labeled trip used to tune the defaults (692 photos, most of them of people), the
 half used for tuning gave scenery 92% precision at 55% recall and food 100% precision at 80%
-recall, with no photo wrongly put in animals or documents. A view with friends in it goes to
+recall, with one photo wrongly put in animals. A view with friends in it goes to
 `other` on purpose; check the folders before sharing them.
 
 ### CLIP models

@@ -60,4 +60,5 @@ prompts = ["a photo of food on a plate", "a photo of a meal at a restaurant"]
 prompts = ["a screenshot of a phone screen", "a photo of a receipt", "a photo of a ticket", "a photo of a map"]
 
 [categories.other]
-prompts = ["a photo of people", "a photo of friends posing", "a selfie", "a photo of a room", "a photo"]
+prompts = ["a photo of people", "a photo of friends posing", "a selfie", "a photo of a room", "a photo",
+           "a photo of an object", "a photo of a vehicle", "a photo of furniture"]

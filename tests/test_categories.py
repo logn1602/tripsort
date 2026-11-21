@@ -346,15 +346,17 @@ PUBLIC = Path(__file__).parent / "fixtures" / "categories"
 SAMPLE = sorted(f"{p.parent.name}/{p.name}" for p in PUBLIC.rglob("*.jpg"))
 VERSIONS = ("photo", "mirrored", "cropped", "darker")
 
-# Calls the default prompts get wrong by a clear margin, with either image encoder
-# (docs/decisions.md). They are non-strict xfails, so a fix makes them pass, not fail.
-KNOWN_MISSES = {("other/road_bike.jpg", version): "lands in animals" for version in VERSIONS}
+# Calls the default prompts get wrong by a clear margin: non-strict xfails, so a fix makes
+# them pass, not fail. None since `other` got prompts for things (docs/decisions.md): the road
+# bike still lands in animals, but as a close call.
+KNOWN_MISSES: dict[tuple[str, str], str] = {}
 
 # A call is judged strictly only when it is clear: moving the photo to another category would
 # take a change of at least CLEAR_MARGIN to one category's score (100 times its average cosine
 # similarity, the softmax's input). ONNX Runtime's int8 math differs a little between CPUs, so
 # a closer call may land either way and is a non-strict xfail. Switching between the int8 and
-# fp32 image encoders changed 4 of these 100 calls, each with a margin under 0.3 with both.
+# fp32 image encoders changes 1 of these 100 calls (4 with the earlier prompts), never one
+# with a margin of 0.3 or more.
 CLEAR_MARGIN = 1.0
 
 
