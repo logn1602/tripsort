@@ -68,7 +68,8 @@ API (`LicenseShortName`). The licenses were checked on 2026-11-21. The receipt, 
 screenshot, and the `other/` photos were picked by license and content before CLIP scored
 them, so the sample keeps the photos it gets wrong.
 
-What the tests check with them: `tripsort run` puts each photo in its folder's category
-(`other` for `other/`), and CLIP gives a mirrored, a cropped, and a darkened copy the same
-category, except for the known misses listed in `tests/test_categories.py` (see
-`docs/decisions.md`).
+What the tests check with them: each photo, through the whole pipeline, and a mirrored, a
+cropped, and a darkened copy of it, through CLIP, should land in its folder's category
+(`other` for `other/`). Only clear calls are judged strictly. Close calls and the known misses
+(see `docs/decisions.md`) are non-strict xfails, so a small difference in ONNX Runtime's math
+on another CPU does not fail the tests.
