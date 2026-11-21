@@ -408,6 +408,7 @@ people (food, animals, screenshots, tickets) can be labeled for categories alone
 uv run eval/run_eval.py categories [--split dev|test] [--config PROMPTS.toml] [--mistakes]
 uv run eval/run_eval.py prelabel   --labeled-set DIR --categories-only   # labels.html: category buttons only
 uv run eval/run_eval.py categories --labeled-set DIR [--split dev|test]
+uv run eval/run_eval.py public                                        # the public sample, real models
 ```
 
 `categories` prints precision, recall, and F1 per category, the confusion matrix, macro F1
@@ -418,7 +419,9 @@ set's bursts. `--config` tries a prompt set without editing anything. `--mistake
 `category_mistakes.html`, the dev rows it got wrong with their photos, into the labeled set's
 folder, never the repository: it shows your photos. `--labeled-set` reads a flat folder of
 photos as well as one subfolder per phone. The image encoder is the default one;
-`TRIPSORT_CLIP_IMAGE=int8` or `fp32` compares them on the same index.
+`TRIPSORT_CLIP_IMAGE=int8` or `fp32` compares them on the same index. `public` runs the
+public-domain photos in `tests/fixtures/categories/` through the whole pipeline: clean web
+photos, so a sanity check rather than a measure of trip photos.
 
 ### Measuring bursts
 

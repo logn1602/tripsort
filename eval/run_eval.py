@@ -37,6 +37,7 @@ import tempfile
 import time
 import tomllib
 import traceback
+import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -90,6 +91,7 @@ from tripsort.index.db import transaction
 from tripsort.ingest.decode import UnreadableImageError, decode_oriented
 from tripsort.ingest.hashing import hamming, phash_to_int
 from tripsort.ingest.sources import ZipCache
+from tripsort.ingest.zip_reader import IMAGE_EXTENSIONS
 
 BASELINE = Path(__file__).resolve().parent / "baseline.json"
 LABELS_CSV = "labels.csv"
@@ -914,6 +916,40 @@ def _write_mistakes(
     return {"rows": len(cards)}
 
 
+PUBLIC_SAMPLE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "categories"
+
+
+def evaluate_public(sample: Path, work: Path) -> dict[str, Any]:
+    """The categories of a public sample (one folder per category of public-domain or CC0
+    photos, such as tests/fixtures/categories), through the whole pipeline with the real
+    models. A sanity check: the photos are clean web photos, not trip photos."""
+    started = time.perf_counter()
+    files = sorted(p for p in sample.rglob("*") if p.suffix.lower() in IMAGE_EXTENSIONS)
+    work.mkdir(parents=True, exist_ok=True)
+    archive = work / "public.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        for path in files:
+            zf.write(path, f"{path.parent.name}/{path.name}")
+    with Project.open(work / "project") as project:
+        project.ingest([archive])
+        project.analyze()
+        found = dict(
+            project.connection.execute(
+                "SELECT o.member_path, c.label FROM occurrences o JOIN categories c "
+                "ON c.media_id = o.media_id AND c.is_primary = 1"
+            ).fetchall()
+        )
+    pairs = [(m.split("/")[0], str(label)) for m, label in sorted(found.items())]
+    return {
+        "tripsort_version": __version__,
+        "clip_model": CLIP_MODEL_ID,
+        "photos": len(files),
+        "scored": len(pairs),
+        "categories": category_report(pairs, list(CATEGORIES)),
+        "seconds": round(time.perf_counter() - started, 1),
+    }
+
+
 def _config_overrides(path: Path) -> dict[str, str]:
     """A tripsort.toml as TABLE.KEY overrides (the key dotted further for nested tables,
     such as categories.food.prompts), so --set can still change single values."""
@@ -990,6 +1026,11 @@ def main(argv: list[str] | None = None) -> int:
     bursts.add_argument("--set", action="append", default=[], metavar="TABLE.KEY=VALUE")
     bursts.add_argument("--name", default="generated", help="baseline key (default: generated)")
     bursts.add_argument("--write-baseline", action="store_true", help="save to eval/baseline.json")
+    public = sub.add_parser("public", help="categories of a public sample, with the real models")
+    public.add_argument("sample", type=Path, nargs="?", default=PUBLIC_SAMPLE)
+    public.add_argument("--work", type=Path, help="project folder to use (default: a temp folder)")
+    public.add_argument("--name", default="public_sample", help="baseline key")
+    public.add_argument("--write-baseline", action="store_true", help="save to eval/baseline.json")
     for name, text in (
         ("prelabel", "write labels.csv and labels.html into the labeled set's folder"),
         ("people", "per-person precision and recall on the checked rows of labels.csv"),
@@ -1024,6 +1065,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2))
         if args.write_baseline:
             _save_baseline("dedupe", args.name, result)
+        return 0
+    if args.command == "public":
+        result = _with_work(args.work, lambda w: evaluate_public(args.sample, w))
+        print(json.dumps(result, indent=2))
+        if args.write_baseline:
+            _save_baseline("categories", args.name, result)
         return 0
     if args.command == "bursts":
         burst_overrides = dict(item.split("=", 1) for item in args.set)

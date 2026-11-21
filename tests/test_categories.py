@@ -338,3 +338,50 @@ def test_a_photo_about_its_people_is_other(
     )
     with Project.open(tmp_path / "sorted") as off:
         assert off.analyze().categories.photos["scenery"] == 1
+
+
+# the real models, on public-domain and CC0 photos (tests/fixtures/README.md)
+
+PUBLIC = Path(__file__).parent / "fixtures" / "categories"
+
+
+@pytest.mark.models
+def test_the_public_sample_lands_in_its_categories(tmp_path: Path) -> None:
+    files = sorted(PUBLIC.rglob("*.jpg"))
+    assert len(files) >= 18
+    entries = [(f"{f.parent.name}/{f.name}", f.read_bytes()) for f in files]
+    with Project.open(tmp_path / "sorted") as project:
+        project.ingest([make_zip(tmp_path / "public.zip", entries)])
+        project.analyze()
+        found = dict(
+            project.connection.execute(
+                "SELECT o.member_path, c.label FROM occurrences o JOIN categories c "
+                "ON c.media_id = o.media_id AND c.is_primary = 1"
+            ).fetchall()
+        )
+    assert found == {member: member.split("/")[0] for member, _ in entries}
+
+
+@pytest.mark.models
+def test_edited_copies_keep_their_category() -> None:
+    from PIL import ImageEnhance, ImageOps
+
+    from tripsort.clip.encoder import load_image_encoder
+    from tripsort.clip.preprocess import clip_input
+
+    config = load_config()
+    labels = list(config.categories)
+    sets = [np.stack([shipped()[p] for p in config.categories[label]]) for label in labels]
+    encoder = load_image_encoder()
+    for path in sorted(PUBLIC.rglob("*.jpg")):
+        with Image.open(path) as original:
+            image = original.convert("RGB")
+        w, h = image.size
+        edits = [
+            ImageOps.mirror(image),
+            image.crop((w // 10, h // 10, w - w // 10, h - h // 10)),
+            ImageEnhance.Brightness(image).enhance(0.6),
+        ]
+        batch = np.stack([clip_input(np.asarray(e)) for e in edits])
+        found = primaries(shares(encoder.embed(batch), sets), labels, 0.3)
+        assert found == [path.parent.name] * 3, path.name

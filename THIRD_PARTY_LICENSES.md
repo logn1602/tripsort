@@ -43,5 +43,6 @@ checked on 2026-11-21.
 
 ## Test fixtures
 
-The face-model tests use three public-domain portrait paintings; their sources are listed in
-`tests/fixtures/README.md`.
+The face-model tests use three public-domain portrait paintings, and the category tests 18
+public-domain or CC0 photos and scans with no people in them (scenery, animals, food,
+documents); their sources and licenses are listed in `tests/fixtures/README.md`.
