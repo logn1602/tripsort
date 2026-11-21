@@ -22,6 +22,7 @@ from tripsort.clip.prompts import config_prompts, shipped
 from tripsort.clip.types import TEXT_MODEL_ID, unit_rows
 from tripsort.config import load_config
 from tripsort.errors import ModelError
+from tripsort.models.registry import CLIP_IMAGE, CLIP_IMAGE_FP32
 
 FAKE_CATEGORIES = """
 [categories.scenery]
@@ -344,11 +345,27 @@ def test_a_photo_about_its_people_is_other(
 
 PUBLIC = Path(__file__).parent / "fixtures" / "categories"
 
+# Known misses with the default prompts, kept so these tests fail when one is fixed or a
+# new one appears (docs/decisions.md). Both image encoders put the road bike in animals;
+# fp32 puts the car there too, int8 only its crop and the receipt's (which, without its
+# header, reads as food).
+if CLIP_IMAGE is CLIP_IMAGE_FP32:
+    MISSES = {"other/road_bike.jpg": "animals", "other/vintage_car.jpg": "animals"}
+    CROP_MISSES: dict[str, str] = {}
+else:
+    MISSES = {"other/road_bike.jpg": "animals"}
+    CROP_MISSES = {"documents/grocery_receipt.jpg": "food", "other/vintage_car.jpg": "animals"}
+
+
+def expected_category(member: str) -> str:
+    return MISSES.get(member, member.split("/")[0])
+
 
 @pytest.mark.models
 def test_the_public_sample_lands_in_its_categories(tmp_path: Path) -> None:
     files = sorted(PUBLIC.rglob("*.jpg"))
-    assert len(files) >= 18
+    assert len(files) >= 25
+    assert {f.parent.name for f in files} == set(load_config().categories)  # other too
     entries = [(f"{f.parent.name}/{f.name}", f.read_bytes()) for f in files]
     with Project.open(tmp_path / "sorted") as project:
         project.ingest([make_zip(tmp_path / "public.zip", entries)])
@@ -359,7 +376,7 @@ def test_the_public_sample_lands_in_its_categories(tmp_path: Path) -> None:
                 "ON c.media_id = o.media_id AND c.is_primary = 1"
             ).fetchall()
         )
-    assert found == {member: member.split("/")[0] for member, _ in entries}
+    assert found == {member: expected_category(member) for member, _ in entries}
 
 
 @pytest.mark.models
@@ -374,6 +391,7 @@ def test_edited_copies_keep_their_category() -> None:
     sets = [np.stack([shipped()[p] for p in config.categories[label]]) for label in labels]
     encoder = load_image_encoder()
     for path in sorted(PUBLIC.rglob("*.jpg")):
+        member = f"{path.parent.name}/{path.name}"
         with Image.open(path) as original:
             image = original.convert("RGB")
         w, h = image.size
@@ -384,4 +402,5 @@ def test_edited_copies_keep_their_category() -> None:
         ]
         batch = np.stack([clip_input(np.asarray(e)) for e in edits])
         found = primaries(shares(encoder.embed(batch), sets), labels, 0.3)
-        assert found == [path.parent.name] * 3, path.name
+        expected = expected_category(member)
+        assert found == [expected, CROP_MISSES.get(member, expected), expected], member

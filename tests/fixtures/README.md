@@ -27,12 +27,13 @@ people folder per painting and names the folders from a refs folder.
 
 ## categories/
 
-Photos and scans with no people in them, in one folder per category, for sanity-checking how
-CLIP sorts photos into categories. Each file starts from the rendition Wikimedia Commons serves
-for a 1200 px wide request (1280 px wide, or the original file when that is narrower),
-downscaled to 640 px on its long side (Pillow, Lanczos), converted to RGB (mapped to sRGB
-first when the rendition embeds a color profile), and saved as a JPEG at quality 85 with no
-metadata (EXIF, ICC profile, comments).
+Photos, scans, and screenshots with no people in them, in one folder per category, for
+sanity-checking how CLIP sorts photos into categories; `other/` holds photos that fit none of
+them, which tripsort leaves out of `categories/`. Each file starts from the rendition Wikimedia
+Commons serves for a 1200 px wide request (1280 px wide, or the original file when that is
+narrower), downscaled to 640 px on its long side (Pillow, Lanczos), converted to RGB
+(transparent pixels over white, and mapped to sRGB first when the rendition embeds a color
+profile), and saved as a JPEG at quality 85 with no metadata (EXIF, ICC profile, comments).
 
 | File | What it shows | Source | License |
 | --- | --- | --- | --- |
@@ -54,6 +55,20 @@ metadata (EXIF, ICC profile, comments).
 | `documents/city_map_1855.jpg` | Printed plan of the port and town of Brest, France, 1855, with its legend | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Btv1b530849639_plan_du_port_et_de_la_ville_de_Brest_1855_restored.jpg) | Public domain |
 | `documents/train_ticket.jpg` | A British Rail cheap day return ticket, Peterborough East to Wakerley and Barrowden | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Railway_ticket_from_Wakerley_station.JPG) | Public domain |
 | `documents/theatre_ticket.jpg` | A free admission ticket to the Coliseum theatre, Seattle, 1911 | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Coliseum_Theatre_ticket,_1911_(MOHAI_11322).jpg) | Public domain |
+| `documents/grocery_receipt.jpg` | A Tesco grocery receipt paid in cash, Finchley, London, 1994 | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Tesco_grocery_receipt_Finchley_1994.jpg) | Public domain |
+| `documents/alert_screenshot.jpg` | A phone screenshot of the test alert sent across Germany on 8 December 2022 | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Hinweis_Probealarm_Screenshot_20221208_105924_Wireless_emergency_alerts_crop.png) | Public domain |
+| `other/hotel_room.jpg` | A hotel room with beds, an armchair, and a wall-mounted TV, Bath, England | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Interior_of_a_room_of_Travelodge_Bath_City_Centre_2025-07-22.jpg) | CC0 |
+| `other/road_bike.jpg` | A road bike leaning against a stone wall | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Cannnondale_Synapse_Carbon_6_105_2014_002.jpg) | CC0 |
+| `other/tool_kit.jpg` | A cordless drill and hand tools laid out on a white surface | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Repair_tool_kit.jpg) | CC0 |
+| `other/empty_chairs.jpg` | Rows of empty chairs in the Generalife gardens, Granada, Spain | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Chairs,_blue_bottle,_Generalife,_Granada,_Spain.jpg) | CC0 |
+| `other/vintage_car.jpg` | A 1970 Nissan Skyline 2000GT-R on display in a museum | [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:1970_Nissan_Skyline_2000GT-R.jpg) | CC0 |
 
 Every file is public domain or CC0 according to its Commons page, as reported by the Commons
-API (`LicenseShortName`). The licenses were checked on 2026-11-21.
+API (`LicenseShortName`). The licenses were checked on 2026-11-21. The receipt, the
+screenshot, and the `other/` photos were picked by license and content before CLIP scored
+them, so the sample keeps the photos it gets wrong.
+
+What the tests check with them: `tripsort run` puts each photo in its folder's category
+(`other` for `other/`), and CLIP gives a mirrored, a cropped, and a darkened copy the same
+category, except for the known misses listed in `tests/test_categories.py` (see
+`docs/decisions.md`).
