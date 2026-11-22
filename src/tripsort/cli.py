@@ -172,7 +172,7 @@ def ingest(
         _show_ingest(result)
         if benchmark:
             _show_benchmark(result, None, None)
-    partial = result.problems or result.face_problem or result.faces_pending
+    partial = result.problems or _models_missing(result)
     raise typer.Exit(EXIT_PARTIAL if partial else EXIT_OK)
 
 
@@ -409,12 +409,19 @@ def _exit_code(
 ) -> int:
     stats = project.stats()
     partial = (
-        bool(ingested and (ingested.problems or ingested.face_problem or ingested.faces_pending))
+        bool(ingested and (ingested.problems or _models_missing(ingested)))
         or bool(exported.problems)
         or stats.unreadable > 0
         or stats.read_failures > 0
     )
     return EXIT_PARTIAL if partial else EXIT_OK
+
+
+def _models_missing(result: "IngestResult") -> bool:
+    """Some photos could not be scanned for faces or embedded with CLIP."""
+    return bool(
+        result.face_problem or result.faces_pending or result.clip_problem or result.clip_pending
+    )
 
 
 def _show_ingest(result: "IngestResult") -> None:

@@ -86,13 +86,19 @@ def test_shot_types_and_selfies() -> None:
     assert [shot_type(n) for n in (0, 1, 2, 5)] == ["none", "solo", "group", "group"]
     assert is_front_camera("iPhone 15 Pro front camera 2.69mm f/1.9") is True
     assert is_front_camera("iPhone 15 Pro back triple camera 6.765mm f/1.78") is False
-    assert is_front_camera("Storefront 50mm") is False  # 'front' as a word only
+    assert is_front_camera("Storefront 50mm") is None  # 'front' as a word only
+    assert is_front_camera("Galaxy S24 rear wide camera") is False
+    assert is_front_camera("OnePlus 12 lens 6.6mm") is None  # it does not say which
     assert is_front_camera(None) is None
     assert is_selfie(True, 1)
     assert is_selfie(True, 3)
     assert not is_selfie(True, 0)
     assert not is_selfie(None, 2)
     assert not is_selfie(False, 1)
+    assert is_selfie(None, 1, 0.9, 0.8)  # the CLIP hint, when the lens model is silent
+    assert not is_selfie(None, 1, 0.9, 0.95)
+    assert not is_selfie(None, 1, 1.0, 1.0)  # 1.0 turns the hint off
+    assert not is_selfie(False, 1, 1.0, 0.5)  # the lens model wins
 
 
 # names

@@ -2,7 +2,9 @@
 
 It holds no absolute paths (zips appear by file name only), no GPS, no timestamps, and no
 face boxes or embeddings, so an export with the same inputs and config writes the same bytes
-every time. It does name the people in each photo, as the people/ folders do.
+every time. It does name the people in each photo, as the people/ folders do. Each photo's
+category shares are rounded to four decimals, and bursts are numbered from 1 in camera and
+time order.
 """
 
 import json
@@ -13,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from tripsort import __version__
+from tripsort.clip.store import pending_clip_scans
+from tripsort.clip.types import CLIP_MODEL_ID
 from tripsort.config import Config
 from tripsort.export.writer import TMP_SUFFIX
 from tripsort.faces.names import display_name
@@ -76,6 +80,23 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
         )
     }
 
+    scores: defaultdict[int, dict[str, float]] = defaultdict(dict)
+    primary: dict[int, str] = {}
+    for media_id, label, score, is_primary in conn.execute(
+        "SELECT media_id, label, score, is_primary FROM categories ORDER BY media_id"
+    ):
+        scores[int(media_id)][str(label)] = round(float(score), 4)
+        if is_primary:
+            primary[int(media_id)] = str(label)
+    burst_of: dict[int, int] = {}
+    for number, (group_id,) in enumerate(
+        conn.execute("SELECT id FROM media_groups WHERE kind = 'burst' ORDER BY id").fetchall(), 1
+    ):
+        for (media_id,) in conn.execute(
+            "SELECT media_id FROM group_members WHERE group_id = ?", (group_id,)
+        ):
+            burst_of[int(media_id)] = number
+
     files = []
     for row in conn.execute(
         "SELECT id, sha256, kind, format, bytes, width, height, taken_at, tz_offset, "
@@ -113,6 +134,9 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
                 "shot": row["shot"],
                 "selfie": None if row["is_selfie"] is None else bool(row["is_selfie"]),
                 "faces": face_counts.get(media_id),
+                "category": primary.get(media_id),
+                "category_scores": scores.get(media_id),
+                "burst": burst_of.get(media_id),
                 "paths": paths.get(media_id, []),
                 "occurrences": occurrences[media_id],
             }
@@ -166,7 +190,8 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
         "config_hash": config.hash,
         "thresholds": asdict(config.thresholds),
         "people_settings": asdict(config.people),
-        "analyzers": {"phash": PHASH_ALGORITHM, "faces": FACE_MODEL_ID},
+        "categories": {name: list(prompts) for name, prompts in config.categories.items()},
+        "analyzers": {"phash": PHASH_ALGORITHM, "faces": FACE_MODEL_ID, "clip": CLIP_MODEL_ID},
         "people": [
             {"name": p.name, "photos": p.photos, "solo": p.solo, "named_by": p.named_by}
             for p in people
@@ -193,6 +218,13 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
             "named_people": sum(1 for p in people if p.photos and p.named_by),
             "shots": shots,
             "faces_not_scanned": pending_scans(conn, FACE_MODEL_ID),
+            "categories": {
+                name: sum(1 for label in primary.values() if label == name)
+                for name in config.categories
+            },
+            "bursts": len(set(burst_of.values())),
+            "photos_in_bursts": len(burst_of),
+            "clip_not_embedded": pending_clip_scans(conn, CLIP_MODEL_ID),
         },
         "sources": sources,
         "files": files,

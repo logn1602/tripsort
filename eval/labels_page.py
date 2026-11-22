@@ -11,6 +11,10 @@ allows it (Edge, Chrome), else as a download to put in its place. Changes are st
 of the page; when prelabel writes the page again from a changed labels.csv, changes made on
 the old page that never reached labels.csv are offered back.
 
+With ``categories_only`` (a set with no people, labeled for categories alone) the cards
+offer only the category, and a row can be checked with a category; labels.csv keeps all its
+columns, with the shot set to none by prelabel.
+
 The page shows friends' faces and names. It is written next to labels.csv, in the labeled
 set's folder, and never anywhere else.
 """
@@ -67,7 +71,12 @@ def thumb_uri(image: Image.Image) -> str:
 
 
 def page_data(
-    cards: list[Card], names: list[str], *, csv_sha256: str, can_save: bool
+    cards: list[Card],
+    names: list[str],
+    *,
+    csv_sha256: str,
+    can_save: bool,
+    categories_only: bool = False,
 ) -> dict[str, Any]:
     """What the page's script starts from: each row's labels, the names to offer, and the ids
     its storage is kept under (``set`` names the rows, ``base`` their labels right now)."""
@@ -92,6 +101,7 @@ def page_data(
         "base": hashlib.sha256(labels_id.encode("utf-8")).hexdigest()[:16],
         "csvSha256": csv_sha256,  # labels.csv's bytes, to notice it changed behind the page
         "canSave": can_save,
+        "categoriesOnly": categories_only,
         "columns": list(COLUMNS),
         "names": names,
         "shots": list(SHOTS),
@@ -231,6 +241,38 @@ If labels.csv changes outside this page, run prelabel again to rebuild the page.
 </details>
 """
 
+_RULES_CATEGORIES = """
+<details class="rules" open><summary>How to label</summary>
+<p>This set is labeled for categories only: its photos have no people. Click the photo's
+category, or press its key (<b>Keys</b> lists them), then mark the row <b>checked</b>: Enter
+checks it and moves to the next row. Only checked rows count. Every change is kept in this
+browser as you make it. <b>Save labels.csv</b> writes the file: the first time, pick the
+labels.csv next to this page; a browser that cannot write files downloads it instead.</p>
+<ul>
+<li><b>category</b>: scenery (the view itself is the subject), animals, food, documents
+(screenshots, tickets, receipts, maps), or other.</li>
+</ul>
+<p>The buttons start from tripsort's guesses: check each one.</p>
+</details>
+"""
+
+_HELP_CATEGORIES = """
+<div class="help" id="help" hidden><div class="panel" role="dialog" aria-modal="true"
+aria-labelledby="help-title">
+<h2 id="help-title">Keys</h2>
+<dl>
+<dt>V, A, F, D, O</dt><dd>category: scenery, animals, food, documents, other</dd>
+<dt>Enter</dt><dd>mark the row checked and go to the next one</dd>
+<dt>X</dt><dd>checked on or off, staying on the row</dd>
+<dt>J, K, arrow keys</dt><dd>next or previous row</dd>
+<dt>Ctrl+S</dt><dd>save labels.csv</dd>
+<dt>?</dt><dd>show or hide this list</dd>
+</dl>
+<p>The keys act on the outlined row. Click a card to make it that row.</p>
+<button type="button" class="tool" id="help-close">Close</button>
+</div></div>
+"""
+
 _HELP = """
 <div class="help" id="help" hidden><div class="panel" role="dialog" aria-modal="true"
 aria-labelledby="help-title">
@@ -342,10 +384,13 @@ _SCRIPT = r"""
     }
     const hint = document.createElement("span");
     hint.className = "hint";
-    box.append(
+    const faces = data.categoriesOnly ? [] : [
       group("people", people),
       group("shot", data.shots.map((v) => button("shot", v, v, keyFor(SHOT_KEYS, v)))),
       group("selfie", [button("selfie", "y", "selfie", "Y")]),
+    ];
+    box.append(
+      ...faces,
       group("category", data.categories.map(
         (v) => button("category", v, v, keyFor(CATEGORY_KEYS, v)))),
       group("review", [button("checked", "y", "checked", "Enter", "check"), hint]),
@@ -403,8 +448,8 @@ _SCRIPT = r"""
   function toggleSelfie(i) { change(i, (s) => { s.selfie = !s.selfie; }); }
   function toggleChecked(i) {
     const s = state[i];
-    if (!s.checked && !(s.shot && s.category)) {
-      hint(i, "Pick a shot and a category first.");
+    if (!s.checked && !(s.category && (s.shot || data.categoriesOnly))) {
+      hint(i, data.categoriesOnly ? "Pick a category first." : "Pick a shot and a category first.");
       return false;
     }
     change(i, (x) => { x.checked = !x.checked; });
@@ -769,9 +814,9 @@ _SCRIPT = r"""
       if (j < data.names.length) toggleName(current, data.names[j]);
       else handled = false;
     }
-    else if (has(SHOT_KEYS, key)) setShot(current, SHOT_KEYS[key]);
+    else if (has(SHOT_KEYS, key) && !data.categoriesOnly) setShot(current, SHOT_KEYS[key]);
     else if (has(CATEGORY_KEYS, key)) setCategory(current, CATEGORY_KEYS[key]);
-    else if (key === "y") toggleSelfie(current);
+    else if (key === "y" && !data.categoriesOnly) toggleSelfie(current);
     else if (key === "x") toggleChecked(current);
     else handled = false;
     if (handled) e.preventDefault();
@@ -791,19 +836,22 @@ def write_page(
     *,
     csv_sha256: str = "",
     can_save: bool = True,
+    categories_only: bool = False,
 ) -> None:
     """Write the page for ``cards`` (the rows of labels.csv), with a button for each of
     ``names``. ``csv_sha256`` is labels.csv's SHA-256 as the cards were read from it;
     ``can_save`` is off when some rows of labels.csv could not be read, since saving would
-    drop them."""
-    data = page_data(cards, names, csv_sha256=csv_sha256, can_save=can_save)
+    drop them. ``categories_only`` offers the category alone."""
+    data = page_data(
+        cards, names, csv_sha256=csv_sha256, can_save=can_save, categories_only=categories_only
+    )
     parts = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width, initial-scale=1'>",
         f"<title>Labels: {len(cards):,} rows</title><style>{_STYLE}</style></head><body>",
         _BAR,
         "<main>",
-        _RULES,
+        _RULES_CATEGORIES if categories_only else _RULES,
         "<noscript><p class='banner'>This page needs JavaScript to label.</p></noscript>",
         "<div class='banner' id='banner' hidden></div>",
         "<div class='cards'>",
@@ -832,7 +880,7 @@ def write_page(
         )
     parts += [
         "</div></main>",
-        _HELP,
+        _HELP_CATEGORIES if categories_only else _HELP,
         f"<script type='application/json' id='labels-data'>{_script_json(data)}</script>",
         f"<script>{_SCRIPT}</script></body></html>\n",
     ]

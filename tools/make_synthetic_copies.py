@@ -2,6 +2,7 @@
 
     uv run tools/make_synthetic_copies.py OUT_DIR --generate 200
     uv run tools/make_synthetic_copies.py OUT_DIR --from PHOTO_DIR [--limit 400]
+    uv run tools/make_synthetic_copies.py OUT_DIR --bursts (--generate N | --from PHOTO_DIR)
 
 Writes three files to OUT_DIR (keep it outside the repository):
 
@@ -12,6 +13,13 @@ Writes three files to OUT_DIR (keep it outside the repository):
 Members are named by synthetic ids, never by the source file names. Score the result with
 ``uv run eval/run_eval.py dedupe OUT_DIR``.
 
+With ``--bursts`` it writes bursts.zip and bursts_truth.csv instead, to measure burst
+grouping (``uv run eval/run_eval.py bursts OUT_DIR``). Each photo is a moment, ten minutes
+after the one before, on one of three cameras: the photo itself (role "first"), two burst
+shots one and two seconds later (role "burst", the same moment), and the next photo (in
+capture time order, for real photos) placed four seconds after the first shot on the same
+camera (role "neighbor", a moment of its own: a different shot that must not join the burst).
+
 Copies (role "copy"):
   whatsapp       rotation applied, long side 1600 px, JPEG quality 75, EXIF stripped
   whatsapp_hd    rotation applied, long side 4096 px, quality 85, EXIF stripped
@@ -19,6 +27,9 @@ Copies (role "copy"):
   storage_saver  long side 2048 px, quality 85, EXIF kept (Google Photos storage saver)
   recompress     full size, quality 60, EXIF kept (re-saved by an editor)
   heic_to_jpeg   HEIC originals only: full size JPEG, EXIF kept (iPhone "Automatic" transfer)
+
+Generated originals and every burst sibling with EXIF carry a modify date (DateTime) equal to
+their capture time, as cameras write it; copies that keep EXIF keep it byte for byte.
 
 Hard negatives (role "negative", each its own origin, all in originals.zip):
   burst_exif         a burst sibling (1% camera shift, new noise), EXIF time one second later
@@ -38,7 +49,7 @@ import random
 import string
 import sys
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -48,6 +59,7 @@ import pillow_heif  # encoding only; never registered with Pillow
 from PIL import ExifTags, Image, ImageDraw, ImageOps, TiffImagePlugin
 
 from tripsort.ingest.decode import open_image
+from tripsort.ingest.exif import read_exif
 from tripsort.ingest.zip_reader import IMAGE_EXTENSIONS
 
 COPY_VARIANTS = (
@@ -105,7 +117,10 @@ def main(argv: list[str] | None = None) -> int:
         help="make burst negatives from every K-th original (default 3)",
     )
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--bursts", action="store_true", help="write the burst set instead")
     args = parser.parse_args(argv)
+    if args.bursts:
+        return _write_bursts(args)
 
     # Two random streams, so the originals do not depend on how much randomness the
     # copies and bursts use.
@@ -205,6 +220,8 @@ def _generated(n: int, size: tuple[int, int], rng: random.Random) -> Iterator[Or
         exif = Image.Exif()
         exif[ExifTags.Base.Make] = "Synthetic"
         exif[ExifTags.Base.Model] = f"Camera {i % 3}"
+        # the modify date, as cameras write it
+        exif[ExifTags.Base.DateTime] = taken.strftime(_EXIF_TIME)
         ifd = exif.get_ifd(ExifTags.IFD.Exif)
         ifd[ExifTags.Base.DateTimeOriginal] = taken.strftime(_EXIF_TIME)
         ifd[ExifTags.Base.SubsecTimeOriginal] = f"{rng.randrange(1000):03d}"
@@ -306,6 +323,7 @@ def _burst_exif(
     exif[ExifTags.Base.Make] = "Synthetic"
     exif[ExifTags.Base.Model] = model
     stamp = datetime.strptime(base, _EXIF_TIME) + timedelta(seconds=offset_seconds)
+    exif[ExifTags.Base.DateTime] = stamp.strftime(_EXIF_TIME)  # modify date, as cameras write it
     ifd = exif.get_ifd(ExifTags.IFD.Exif)
     ifd[ExifTags.Base.DateTimeOriginal] = stamp.strftime(_EXIF_TIME)
     if subsec is not None:
@@ -396,6 +414,97 @@ def _documents(n: int, rng: random.Random) -> Iterator[bytes]:
         buf = io.BytesIO()
         image.save(buf, "PNG")
         yield buf.getvalue()
+
+
+def _write_bursts(args: argparse.Namespace) -> int:
+    """bursts.zip and bursts_truth.csv (see the module docstring)."""
+    rng = random.Random(args.seed + 1)
+    if args.photos is not None:
+        loaders = _timed_photos(args.photos, args.limit, random.Random(args.seed))
+    else:
+        width, height = (int(v) for v in args.size.lower().split("x"))
+        seeds = [random.Random(args.seed + i).randrange(2**32) for i in range(args.generate)]
+        loaders = [lambda s=s: _photo_like(s, (width, height)) for s in seeds]
+    if not loaders:
+        print("no usable photos found", file=sys.stderr)
+        return 1
+    args.out.mkdir(parents=True, exist_ok=True)
+    start = datetime(2026, 7, 20, 9, 0, 0)
+    rows: list[tuple[str, str, str]] = []
+    with zipfile.ZipFile(args.out / "bursts.zip", "w") as archive:
+
+        def add(
+            member: str,
+            image: Image.Image,
+            base: str,
+            offset: int,
+            camera: str,
+            subsec: str,
+            moment: str,
+            role: str,
+        ) -> None:
+            exif = _burst_exif(
+                base, offset, subsec=subsec, model=camera, exposure=(1, 120), iso=100
+            )
+            archive.writestr(member, _jpeg(image, 92, exif))
+            rows.append((member, moment, role))
+
+        for i, load in enumerate(loaders):
+            image = _shrunk(load(), 2400)
+            base = (start + timedelta(minutes=10 * i)).strftime(_EXIF_TIME)
+            camera = f"Burst camera {i % 3}"
+            add(f"b{i:05d}_0.jpg", image, base, 0, camera, "000", f"m{i:05d}", "first")
+            for k, (offset, subsec) in enumerate(((1, "250"), (2, "500")), start=1):
+                sibling = _sibling(image, rng)
+                add(
+                    f"b{i:05d}_{k}.jpg", sibling, base, offset, camera, subsec, f"m{i:05d}", "burst"
+                )
+                sibling.close()
+            if i + 1 < len(loaders):
+                neighbor = _shrunk(loaders[i + 1](), 2400)
+                add(f"b{i:05d}_n.jpg", neighbor, base, 4, camera, "000", f"n{i:05d}", "neighbor")
+                neighbor.close()
+            image.close()
+    with (args.out / "bursts_truth.csv").open("w", newline="", encoding="utf-8") as fp:
+        writer = csv.writer(fp)
+        writer.writerow(["member", "moment", "role"])
+        writer.writerows(rows)
+    print(f"{len(loaders)} moments, {len(rows)} shots")
+    return 0
+
+
+def _timed_photos(
+    folder: Path, limit: int | None, rng: random.Random
+) -> list[Callable[[], Image.Image]]:
+    """Loaders for the photos in ``folder``, in capture time order (photos without one go
+    first), each giving the photo turned upright, one decoded at a time."""
+    paths = sorted(
+        p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+    if limit is not None and len(paths) > limit:
+        paths = sorted(rng.sample(paths, limit))
+    timed: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for path in paths:
+        data = path.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        if digest in seen:
+            continue
+        seen.add(digest)
+        try:
+            with open_image(data) as image:
+                taken = read_exif(image).datetime or ""
+        except Exception:  # unreadable source photos are simply not used
+            continue
+        timed.append((taken, path))
+    timed.sort()
+
+    def upright(path: Path) -> Image.Image:
+        with open_image(path.read_bytes()) as image:
+            image.load()
+            return ImageOps.exif_transpose(image).convert("RGB")
+
+    return [lambda p=path: upright(p) for _, path in timed]
 
 
 if __name__ == "__main__":

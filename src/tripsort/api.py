@@ -29,7 +29,11 @@ from typing import Self
 
 from tripsort import __version__
 from tripsort._bench import peak_rss_bytes
-from tripsort.config import Config, load_config
+from tripsort.clip.bursts import BurstStats
+from tripsort.clip.categorize import CategoryStats
+from tripsort.clip.store import pending_clip_scans
+from tripsort.clip.types import CLIP_MODEL_ID, ImageEncoder, TextEncoder
+from tripsort.config import OTHER, Config, load_config
 from tripsort.dedupe.copies import rebuild_copy_groups
 from tripsort.errors import ModelError, UserError, ZipError
 from tripsort.export.manifest import write_manifest
@@ -80,6 +84,8 @@ class AnalyzeResult:
     seconds: float = 0.0
     peak_rss_bytes: int | None = None
     folder: Path | None = None  # the project folder
+    categories: CategoryStats = field(default_factory=CategoryStats)
+    bursts: BurstStats = field(default_factory=BurstStats)
 
     def summary(self, project: str | None = None) -> str:
         """The summary. ``project`` is how its commands name the project folder, such as the
@@ -112,8 +118,33 @@ class AnalyzeResult:
                 f"{count(s.read_failures, 'zip entry', 'zip entries')} could not be read "
                 "(see the messages above and manifest.json)."
             )
+        lines.extend(_category_lines(self.categories, self.bursts))
         lines.extend(_people_lines(self.people, project))
         return "\n".join(lines)
+
+
+def _category_lines(c: CategoryStats, b: BurstStats) -> list[str]:
+    lines = []
+    if c.problem:
+        lines.append(f"Categories were not scored: {c.problem}")
+    elif c.scored:
+        sorted_into = [f"{n:,} {label}" for label, n in c.photos.items() if label != OTHER and n]
+        lines.append(
+            f"Sorted {count(c.scored, 'photo')} by category: "
+            f"{', '.join(sorted_into) if sorted_into else 'none fits one'}; "
+            f"{c.photos.get(OTHER, 0):,} other."
+        )
+    if c.not_embedded:
+        lines.append(
+            f"{count(c.not_embedded, 'photo')} without a CLIP embedding yet "
+            "(no category, no burst); `tripsort ingest` on this project embeds them."
+        )
+    if b.bursts:
+        lines.append(
+            f"Found {count(b.bursts, 'burst')} ({count(b.photos, 'photo')}); every shot stays "
+            "in all/."
+        )
+    return lines
 
 
 def _people_lines(p: PeopleStats, project: str) -> list[str]:
@@ -154,6 +185,8 @@ class Project:
         self.config = config
         self._conn = conn
         self._faces: FaceAnalyzer | None = None
+        self._clip: ImageEncoder | None = None
+        self._text: TextEncoder | None = None
         self.people = People(self)
 
     @classmethod
@@ -182,52 +215,104 @@ class Project:
             self._faces = analyzer.load_face_analyzer(progress)
         return self._faces
 
+    def clip_encoder(self, progress: Progress | None = None) -> ImageEncoder:
+        """The CLIP image encoder, loaded once per project; the model downloads on first use.
+
+        Raises ``ModelError`` when the model cannot be downloaded.
+        """
+        if self._clip is None:
+            from tripsort.clip import encoder  # ONNX Runtime loads only when CLIP is needed
+
+            self._clip = encoder.load_image_encoder(progress)
+        return self._clip
+
     def ingest(
         self, zips: Iterable[str | os.PathLike[str]] = (), *, progress: Progress | None = None
     ) -> IngestResult:
-        """Stage 1: read the zips and decode every file not seen before, finding faces in
-        the same pass. Photos indexed earlier without a face scan are scanned too, so
-        ``ingest()`` with no zips only catches up on faces."""
+        """Stage 1: read the zips and decode every file not seen before, finding faces and
+        the CLIP embedding in the same pass. Photos indexed earlier without either are
+        scanned too, so ``ingest()`` with no zips only catches up on them."""
         paths = [Path(z) for z in zips]
         for path in paths:  # before the models load (or download) for nothing
             if not path.is_file():
                 raise ZipError(f"{path.resolve()}: no such file")
-        problem: list[str] = []
+        face_problem: list[str] = []
+        clip_problem: list[str] = []
 
         def load_faces() -> FaceAnalyzer | None:
             try:
                 return self.face_analyzer(progress)
             except ModelError as exc:
-                problem.append(str(exc))
+                face_problem.append(str(exc))
+                return None
+
+        def load_clip() -> ImageEncoder | None:
+            try:
+                return self.clip_encoder(progress)
+            except ModelError as exc:
+                clip_problem.append(str(exc))
                 return None
 
         with self._run("ingest") as run:
-            result = ingest_zips(self._conn, paths, progress=progress, faces=load_faces)
-            result.face_problem = problem[0] if problem else None
+            result = ingest_zips(
+                self._conn, paths, progress=progress, faces=load_faces, clip=load_clip
+            )
+            result.face_problem = face_problem[0] if face_problem else None
             result.faces_pending = pending_scans(
                 self._conn, self._faces.model_id if self._faces else FACE_MODEL_ID
+            )
+            result.clip_problem = clip_problem[0] if clip_problem else None
+            result.clip_pending = pending_clip_scans(
+                self._conn, self._clip.model_id if self._clip else CLIP_MODEL_ID
             )
             run.items, run.bytes = result.files_read, result.bytes_read
         result.peak_rss_bytes = run.peak_rss_bytes
         return result
 
     def analyze(self) -> AnalyzeResult:
-        """Resolve dates, find copies, and sort faces into people and shot types. Reads the
-        index only, never the zips."""
+        """Resolve dates, find copies, score categories, sort faces into people and shot
+        types, and group bursts. Reads the index only, never the zips; the text encoder
+        loads only for prompts whose embeddings are neither shipped nor cached."""
+        from tripsort.clip.bursts import analyze_bursts
+        from tripsort.clip.categorize import analyze_categories
         from tripsort.faces.analysis import analyze_people  # pulls in scikit-learn
 
         with self._run("analyze") as run:
             started = time.perf_counter()
             dates = resolve_dates(self._conn)
             rebuild_copy_groups(self._conn, self.config.thresholds)
-            with transaction(self._conn):
-                people = analyze_people(self._conn, self.config.people)
+            try:
+                with transaction(self._conn):
+                    # categories first: the shot types use their selfie hint
+                    categories = analyze_categories(self._conn, self.config, self.text_encoder)
+                    people = analyze_people(self._conn, self.config.people)
+                    bursts = analyze_bursts(self._conn, self.config.thresholds)
+            finally:
+                self._text = None  # the text encoder is only needed for new prompts
             set_meta(self._conn, "analysis_state", self._analysis_state())
             stats = project_stats(self._conn)
             run.items = stats.unique
         return AnalyzeResult(
-            stats, dates, people, time.perf_counter() - started, run.peak_rss_bytes, self.folder
+            stats,
+            dates,
+            people,
+            time.perf_counter() - started,
+            run.peak_rss_bytes,
+            self.folder,
+            categories,
+            bursts,
         )
+
+    def text_encoder(self, progress: Progress | None = None) -> "TextEncoder":
+        """The CLIP text encoder, for prompts tripsort does not ship; downloads on first use.
+
+        Raises ``ModelError`` when it cannot be downloaded.
+        """
+        if self._text is None:
+            from tripsort.clip import encoder
+
+            self._text = encoder.load_text_encoder(progress)
+        return self._text
 
     def export(
         self,
@@ -285,6 +370,7 @@ class Project:
             "SELECT (SELECT COUNT(*) FROM media), (SELECT COALESCE(MAX(id), 0) FROM media), "
             "(SELECT COUNT(*) FROM occurrences), (SELECT COUNT(*) FROM sources), "
             "(SELECT COUNT(*) FROM face_scans), (SELECT COALESCE(MAX(id), 0) FROM faces), "
+            "(SELECT COUNT(*) FROM clip_scans), "
             "(SELECT COALESCE(GROUP_CONCAT(relpath || ':' || sha256, '|'), '') "
             " FROM (SELECT relpath, sha256 FROM ref_images ORDER BY relpath))"
         ).fetchone()

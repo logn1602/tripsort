@@ -18,6 +18,10 @@ T = Thresholds(
     phash_max_distance_both_exif=2,
     phash_max_distance_both_exif_resized=4,
     copy_max_aspect_diff=0.02,
+    category_min_score=0.3,
+    category_face_height=0.03,
+    burst_similarity=0.92,
+    burst_window_seconds=10.0,
 )
 BASE = 0x0F0F_F0F0_3C3C_A5A5
 

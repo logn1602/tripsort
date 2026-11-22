@@ -3,9 +3,10 @@
 * ``all/`` holds each kept file once, extracted from its zip. ``unreadable/`` holds files
   whose bytes could be read but not decoded. With ``export_duplicates``, ``duplicates/<keeper>/``
   shows each keeper (a hardlink into ``all/``) next to the copies that were left out.
-* ``people/<name>/`` and ``shots/{solo,group,selfie}/`` hold hardlinks into ``all/``, so a
-  group photo in three people's folders takes disk space once. A renamed or merged person's
-  links move to the new folder.
+* ``people/<name>/``, ``shots/{solo,group,selfie}/``, and ``categories/<name>/`` hold
+  hardlinks into ``all/``, so a group photo in three people's folders takes disk space once.
+  A renamed or merged person's links move to the new folder. A photo is in the folder of
+  its primary category, and in none when that is ``other``.
 * What an export writes is recorded in the index (``exported_files``). The next export
   writes only what is missing, removes files it wrote earlier that are no longer wanted
   (only if they are unchanged since), leaves files edited since the last export alone, and
@@ -21,11 +22,12 @@ import sqlite3
 import time
 import zipfile
 import zlib
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
+from tripsort.config import OTHER
 from tripsort.errors import ExportError
 from tripsort.export.naming import export_name, fold_key, numbered, person_folder, split_extension
 from tripsort.faces.names import display_name
@@ -39,10 +41,11 @@ UNREADABLE_DIR = "unreadable"
 DUPLICATES_DIR = "duplicates"
 PEOPLE_DIR = "people"
 SHOTS_DIR = "shots"
+CATEGORIES_DIR = "categories"
 SHOT_FOLDERS = ("solo", "group", "selfie")
 TMP_SUFFIX = ".tripsort-tmp"
-_MANAGED_DIRS = (ALL_DIR, UNREADABLE_DIR, DUPLICATES_DIR, PEOPLE_DIR, SHOTS_DIR)
-_LINK_ROLES = frozenset({"dup_keeper", "person", "shot"})  # hardlinks into all/
+_MANAGED_DIRS = (ALL_DIR, UNREADABLE_DIR, DUPLICATES_DIR, PEOPLE_DIR, SHOTS_DIR, CATEGORIES_DIR)
+_LINK_ROLES = frozenset({"dup_keeper", "person", "shot", "category"})  # hardlinks into all/
 _SPACE_MARGIN = 64 * 1024 * 1024
 _COMMIT_EVERY = 50
 
@@ -112,6 +115,7 @@ class ExportResult:
     seconds: float
     people_folders: int = 0
     shots: dict[str, int] = field(default_factory=dict)  # 'solo', 'group', 'selfie' -> files
+    categories: dict[str, int] = field(default_factory=dict)  # category -> files
     manifest: Path | None = None
     peak_rss_bytes: int | None = None
 
@@ -130,6 +134,9 @@ class ExportResult:
             lines.append(
                 f"people/ holds {count(self.people_folders, 'folder')}; shots/ holds {shots}."
             )
+        if any(self.categories.values()):
+            held = ", ".join(f"{n:,} {name}" for name, n in self.categories.items() if n)
+            lines.append(f"categories/ holds {held}.")
         if self.near_copies:
             where = (
                 "duplicates/ shows each one next to the file that was kept"
@@ -141,8 +148,8 @@ class ExportResult:
             lines.append(f"{left_out} {verb_was} left out of all/; {where}.")
         if self.link_fallbacks:
             lines.append(
-                "This drive does not support hardlinks, so people/, shots/, and duplicates/ "
-                "hold copies."
+                "This drive does not support hardlinks, so people/, shots/, categories/, and "
+                "duplicates/ hold copies."
             )
         if self.left_alone:
             lines.append(
@@ -200,6 +207,7 @@ def export_files(
                 )
     people = _load_people_folders(conn)
     shots = _load_shot_folders(conn)
+    categories = _load_category_folders(conn)
     for m in by_date:
         rel = all_relpath.get(m.id)
         if rel is None:
@@ -209,6 +217,8 @@ def export_files(
             planner.want(_Wanted(m, "person", f"{PEOPLE_DIR}/{person}", name, rel))
         for shot in shots.get(m.id, ()):
             planner.want(_Wanted(m, "shot", f"{SHOTS_DIR}/{shot}", name, rel))
+        if (category := categories.get(m.id)) is not None:
+            planner.want(_Wanted(m, "category", f"{CATEGORIES_DIR}/{category}", name, rel))
 
     wanted = planner.wanted
     stale = [record for relpath, record in records.items() if relpath not in planner.claimed]
@@ -235,6 +245,11 @@ def export_files(
             shot: sum(1 for w in wanted if w.role == "shot" and w.folder.endswith(f"/{shot}"))
             for shot in SHOT_FOLDERS
         },
+        categories=dict(
+            sorted(
+                Counter(w.folder.split("/", 1)[1] for w in wanted if w.role == "category").items()
+            )
+        ),
     )
     if dry_run:
         result.seconds = time.perf_counter() - started
@@ -655,3 +670,14 @@ def _load_shot_folders(conn: sqlite3.Connection) -> dict[int, list[str]]:
     ):
         found[int(media_id)] = [str(shot), "selfie"] if is_selfie else [str(shot)]
     return found
+
+
+def _load_category_folders(conn: sqlite3.Connection) -> dict[int, str]:
+    """media id -> its categories/ folder: its primary category, unless that is other."""
+    return {
+        int(media_id): str(label)
+        for media_id, label in conn.execute(
+            "SELECT media_id, label FROM categories WHERE is_primary = 1 AND label != ?",
+            (OTHER,),
+        )
+    }

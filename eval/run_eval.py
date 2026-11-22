@@ -3,9 +3,14 @@
     uv run tools/make_synthetic_copies.py DATA_DIR --generate 200
     uv run eval/run_eval.py dedupe DATA_DIR [--name generated] [--write-baseline]
 
-    uv run eval/run_eval.py prelabel [--refs REFS] [--work DIR]
+    uv run eval/run_eval.py prelabel [--refs REFS] [--work DIR] [--categories-only]
     uv run eval/run_eval.py people [--refs REFS] [--work DIR] [--split dev|test]
                                    [--set people.KEY=VALUE ...] [--name NAME] [--write-baseline]
+    uv run eval/run_eval.py categories [--work DIR] [--split dev|test] [--config FILE]
+                                       [--mistakes] [--name NAME] [--write-baseline]
+
+Each takes --labeled-set DIR for a set other than TRIPSORT_EVAL_DIR (such as a category-only
+set), --config FILE (a tripsort.toml to use, such as a prompt set), and --set TABLE.KEY=VALUE.
 
 The labeled set is the folder named by ``TRIPSORT_EVAL_DIR`` (see eval/datasets.py).
 ``prelabel`` writes labels.csv (unless it exists), filled with tripsort's guesses, and
@@ -15,6 +20,9 @@ dev rows confirm, and the scores after accepting the confirmed ones or all of th
 ``--refs``, both also check that no ref photo is a copy of a labeled photo (see
 eval/ref_copies.py).
 ``--work`` keeps the zips and the index between runs, so a run after the first only analyzes.
+``categories`` scores the primary category of the checked rows (precision, recall, and F1
+per category, the confusion matrix) and the selfie hint; with ``--mistakes`` it writes
+category_mistakes.html, the dev rows it got wrong, into the labeled set's folder.
 
 Only numbers are printed and saved: no file names, no image data, and people appear as p1,
 p2, ... ``--write-baseline`` stores the numbers in eval/baseline.json.
@@ -27,7 +35,9 @@ import json
 import sys
 import tempfile
 import time
+import tomllib
 import traceback
+import zipfile
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -37,9 +47,13 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import contextlib
+import html
+import itertools
 
+import numpy as np
+from category_metrics import category_report
 from datasets import Source, build_sources, eval_dir, file_key  # the sibling modules
-from labels import Row, person_key, read_rows, split_for, write_rows
+from labels import CATEGORIES, Row, person_key, read_rows, split_for, write_rows
 from labels_page import THUMB_SIDE, Box, Card, thumb_uri, write_page
 from metrics import (  # the sibling module, importable once the path is set
     Item,
@@ -68,6 +82,7 @@ from ref_copies import ref_copies
 
 from tripsort import __version__
 from tripsort.api import Project
+from tripsort.clip.types import CLIP_MODEL_ID
 from tripsort.faces.names import display_name
 from tripsort.faces.people import RefsResult
 from tripsort.faces.suggest import Suggestion
@@ -76,10 +91,12 @@ from tripsort.index.db import transaction
 from tripsort.ingest.decode import UnreadableImageError, decode_oriented
 from tripsort.ingest.hashing import hamming, phash_to_int
 from tripsort.ingest.sources import ZipCache
+from tripsort.ingest.zip_reader import IMAGE_EXTENSIONS
 
 BASELINE = Path(__file__).resolve().parent / "baseline.json"
 LABELS_CSV = "labels.csv"
 LABELS_HTML = "labels.html"
+MISTAKES_HTML = "category_mistakes.html"
 
 
 def evaluate_dedupe(data_dir: Path, work: Path) -> dict[str, Any]:
@@ -207,6 +224,7 @@ class Prediction:
     # the people in ``people`` with a real name: the labels.csv guess, since only people
     # with a ref are labeled
     named: list[str] = field(default_factory=list)
+    category: str | None = None  # the primary category, None when not scored
 
 
 def people_project(
@@ -294,6 +312,11 @@ def predictions(
         "  WHERE g.kind = 'copy' AND gm.is_keeper = 0)"
     ):
         kept[int(media_id)] = Prediction(int(media_id), str(sha), [], shot, bool(selfie))
+    for media_id, label in conn.execute(
+        "SELECT media_id, label FROM categories WHERE is_primary = 1"
+    ):
+        if (prediction := kept.get(int(media_id))) is not None:
+            prediction.category = str(label)
     min_score = project.config.people.min_face_score
     for media_id, x, y, w, h, fg, score, match, number, name in conn.execute(
         "SELECT f.media_id, f.x, f.y, f.w, f.h, f.is_foreground, f.score, f.match, p.number, "
@@ -315,7 +338,11 @@ def predictions(
     return files, kept
 
 
-def _guess_rows(files: dict[str, int], kept: dict[int, Prediction]) -> list[Row]:
+def _guess_rows(
+    files: dict[str, int], kept: dict[int, Prediction], *, categories_only: bool = False
+) -> list[Row]:
+    """labels.csv rows pre-filled with tripsort's guesses. For a category-only set (photos
+    with no people) the shot is none and only the category is guessed."""
     first_file = {}
     for name, media_id in sorted(files.items()):
         first_file.setdefault(media_id, name)
@@ -326,10 +353,10 @@ def _guess_rows(files: dict[str, int], kept: dict[int, Prediction]) -> list[Row]
             file=first_file[p.media_id],
             split=split_for(p.sha256),
             checked=False,
-            people=sorted(p.named),
-            shot=p.shot or "",
-            selfie=p.selfie,
-            category="other" if p.shot in ("solo", "group") else "",
+            people=[] if categories_only else sorted(p.named),
+            shot="none" if categories_only else p.shot or "",
+            selfie=False if categories_only else p.selfie,
+            category=p.category or ("other" if p.shot in ("solo", "group") else ""),
         )
         for number, p in enumerate(ordered, start=1)
     ]
@@ -342,9 +369,11 @@ def prelabel(
     overrides: dict[str, str] | None = None,
     *,
     force: bool = False,
+    categories_only: bool = False,
 ) -> dict[str, Any]:
     """Write labels.csv (unless it exists) and labels.html into the labeled set's folder.
-    The page starts from labels.csv as it is, with tripsort's guesses as the face boxes."""
+    The page starts from labels.csv as it is, with tripsort's guesses as the face boxes.
+    ``categories_only`` is for a set with no people: the page offers the category alone."""
     project, sources, named = people_project(root, work, refs, overrides or {})
     with project:
         refs_report = _refs_report(project, refs, named)
@@ -354,7 +383,7 @@ def prelabel(
             rows, problems = read_rows(csv_path)
             state = "kept as it was"
         else:
-            rows, problems = _guess_rows(files, kept), []
+            rows, problems = _guess_rows(files, kept, categories_only=categories_only), []
             write_rows(csv_path, rows)
             state = "written"
         csv_sha256 = hashlib.sha256(csv_path.read_bytes()).hexdigest()
@@ -386,7 +415,14 @@ def prelabel(
                     missing += 1
                 cards.append(card)
         # saving from the page would drop the rows labels.csv could not read
-        write_page(root / LABELS_HTML, cards, names, csv_sha256=csv_sha256, can_save=not problems)
+        write_page(
+            root / LABELS_HTML,
+            cards,
+            names,
+            csv_sha256=csv_sha256,
+            can_save=not problems,
+            categories_only=categories_only,
+        )
         people_found = {name for p in kept.values() for name in p.people}
         named_found = {name for p in kept.values() for name in p.named}
     return {
@@ -591,6 +627,360 @@ def _after_merging(
     }
 
 
+def evaluate_categories(
+    root: Path,
+    work: Path,
+    refs: Path | None,
+    split: str,
+    overrides: dict[str, str],
+    *,
+    mistakes: bool = False,
+) -> dict[str, Any]:
+    """The primary category of each checked row of ``split`` against its label, and the
+    selfie hint: on the labeled selfies, and on free labels (photos whose lens model says
+    which camera took them, scored by the hint alone)."""
+    started = time.perf_counter()
+    rows, problems = read_rows(root / LABELS_CSV)
+    if problems:  # row numbers and column names only
+        return {"label_problems": len(problems), "first_problems": problems[:20]}
+    project, sources, _ = people_project(root, work, refs, overrides)
+    with project:
+        conn = project.connection
+        files, kept = predictions(project, sources)
+        config = project.config
+        hint_photos = {
+            int(media_id)
+            for (media_id,) in conn.execute(
+                "SELECT id FROM media WHERE is_front_camera IS NULL AND shot IN ('solo', 'group')"
+            )
+        }
+        free = conn.execute(
+            "SELECT is_front_camera, clip_selfie FROM media WHERE shot IN ('solo', 'group') "
+            "AND is_front_camera IS NOT NULL AND clip_selfie IS NOT NULL"
+        ).fetchall()
+        page = _write_mistakes(root, project, rows, files, kept) if mistakes else None
+        survey = burst_survey(conn)
+    checked = [r for r in rows if r.checked and r.split == split]
+    pairs: list[tuple[str, str]] = []
+    right_rows: list[int] = []
+    not_found = not_scored = 0
+    tp = fp = fn = hint_used = hint_right = 0
+    for row in checked:
+        guess = _guess(row, files, kept)
+        if guess is None:
+            not_found += 1
+            continue
+        tp += row.selfie and guess.selfie
+        fp += guess.selfie and not row.selfie
+        fn += row.selfie and not guess.selfie
+        if guess.media_id in hint_photos and guess.selfie:
+            hint_used += 1
+            hint_right += row.selfie
+        if guess.category is None:
+            not_scored += 1
+            continue
+        pairs.append((row.category, guess.category))
+        if row.category == guess.category:
+            right_rows.append(row.row)
+    threshold = config.people.selfie_min_score
+    free_tp = sum(1 for front, score in free if front and score >= threshold)
+    free_fp = sum(1 for front, score in free if not front and score >= threshold)
+    free_fn = sum(1 for front, score in free if front and score < threshold)
+    return {
+        "tripsort_version": __version__,
+        "clip_model": CLIP_MODEL_ID,
+        "split": split,
+        "checked_rows": len(checked),
+        "rows_not_found": not_found,
+        "rows_not_scored": not_scored,
+        "settings": {
+            "category_min_score": config.thresholds.category_min_score,
+            "categories": {name: list(p) for name, p in config.categories.items()},
+            "selfie_min_score": threshold,
+        },
+        "categories": category_report(pairs, list(CATEGORIES)),
+        "right_rows": sorted(right_rows),
+        "selfie": {
+            "labeled": tp + fn,
+            "precision": _share(tp, tp + fp),
+            "recall": _share(tp, tp + fn),
+            "from_the_hint": hint_used,
+            "from_the_hint_labeled_selfie": hint_right,
+            "free_labels": {
+                "photos": len(free),
+                "front_camera": sum(1 for front, _ in free if front),
+                "precision": _share(free_tp, free_tp + free_fp),
+                "recall": _share(free_tp, free_tp + free_fn),
+            },
+        },
+        "mistakes_page": page,
+        "bursts_on_this_set": survey,
+        "seconds": round(time.perf_counter() - started, 1),
+    }
+
+
+def _share(num: int, den: int) -> float | None:
+    return round(num / den, 4) if den else None
+
+
+_SIMILARITY_EDGES = (0.80, 0.85, 0.90, 0.92, 0.94, 0.96, 0.98)
+
+
+def similarity_histogram(values: list[float]) -> dict[str, int]:
+    """How many CLIP similarities fall in each band, the bands around burst_similarity."""
+    labels = [f"<{_SIMILARITY_EDGES[0]:.2f}"]
+    labels += [f"{a:.2f}-{b:.2f}" for a, b in itertools.pairwise(_SIMILARITY_EDGES)]
+    labels.append(f">={_SIMILARITY_EDGES[-1]:.2f}")
+    counts = dict.fromkeys(labels, 0)
+    for value in values:
+        band = sum(1 for edge in _SIMILARITY_EDGES if value >= edge)
+        counts[labels[band]] += 1
+    return counts
+
+
+def burst_survey(conn: Any) -> dict[str, Any]:
+    """On a real set, no burst labels: how alike consecutive shots of one camera are, by the
+    time between them, and how many bursts the current settings find."""
+    from tripsort.clip.bursts import load_shots
+
+    by_camera: defaultdict[str, list[Any]] = defaultdict(list)
+    for shot in load_shots(conn):
+        by_camera[shot.camera].append(shot)
+    gaps: dict[str, list[float]] = {"under_10s": [], "10_to_60s": [], "60_to_600s": []}
+    for shots in by_camera.values():
+        shots.sort(key=lambda s: (s.seconds, s.media_id))
+        for a, b in itertools.pairwise(shots):
+            gap = b.seconds - a.seconds
+            band = "under_10s" if gap <= 10 else "10_to_60s" if gap <= 60 else "60_to_600s"
+            if gap <= 600:
+                gaps[band].append(float(a.embedding @ b.embedding))
+    (bursts, photos) = conn.execute(
+        "SELECT COUNT(DISTINCT g.id), COUNT(gm.media_id) FROM media_groups g "
+        "JOIN group_members gm ON gm.group_id = g.id WHERE g.kind = 'burst'"
+    ).fetchone()
+    return {
+        "bursts": int(bursts),
+        "photos_in_bursts": int(photos),
+        "consecutive_shots": {band: similarity_histogram(v) for band, v in gaps.items()},
+    }
+
+
+def evaluate_bursts(data_dir: Path, work: Path, overrides: dict[str, str]) -> dict[str, Any]:
+    """Burst grouping on tools/make_synthetic_copies.py --bursts output: pairwise precision
+    and recall against the true moments, burst shots missed, neighbors that joined a burst,
+    and how alike CLIP finds a moment's shots, and a neighbor, to its first shot."""
+    started = time.perf_counter()
+    with (data_dir / "bursts_truth.csv").open(encoding="utf-8", newline="") as fp:
+        truth = {r["member"]: (r["moment"], r["role"]) for r in csv.DictReader(fp)}
+    folder = work / "project"
+    folder.mkdir(parents=True, exist_ok=True)
+    _write_overrides(folder, overrides)
+    with Project.open(folder) as project:
+        project.ingest([data_dir / "bursts.zip"])
+        project.analyze()
+        conn = project.connection
+        media_of = {
+            str(member): int(media_id)
+            for media_id, member in conn.execute("SELECT media_id, member_path FROM occurrences")
+        }
+        group_of = {
+            int(media_id): int(group_id)
+            for group_id, media_id in conn.execute(
+                "SELECT gm.group_id, gm.media_id FROM group_members gm "
+                "JOIN media_groups g ON g.id = gm.group_id WHERE g.kind = 'burst'"
+            )
+        }
+        vectors = {
+            int(media_id): np.frombuffer(blob, dtype=np.float32)
+            for media_id, blob in conn.execute(
+                "SELECT media_id, embedding FROM clip_embeddings WHERE model_id = ?",
+                (CLIP_MODEL_ID,),
+            )
+        }
+        settings = {
+            "burst_similarity": project.config.thresholds.burst_similarity,
+            "burst_window_seconds": project.config.thresholds.burst_window_seconds,
+        }
+    members = sorted(m for m in truth if m in media_of)
+    tp = fp = fn = 0
+    for i, a in enumerate(members):
+        for b in members[i + 1 :]:
+            same = truth[a][0] == truth[b][0]
+            ga, gb = group_of.get(media_of[a]), group_of.get(media_of[b])
+            grouped = ga is not None and ga == gb
+            tp += same and grouped
+            fp += grouped and not same
+            fn += same and not grouped
+    firsts = {truth[m][0]: m for m in members if truth[m][1] == "first"}
+    burst_sims, neighbor_sims = [], []
+    missed = joined = 0
+    for member in members:
+        moment, role = truth[member]
+        index = moment[1:]
+        first = firsts.get(moment if role != "neighbor" else f"m{index}")
+        if first is None or member == first:
+            continue
+        a, b = media_of[first], media_of[member]
+        similarity = float(vectors[a] @ vectors[b]) if a in vectors and b in vectors else None
+        same_group = group_of.get(a) is not None and group_of.get(a) == group_of.get(b)
+        if role == "burst":
+            missed += not same_group
+            if similarity is not None:
+                burst_sims.append(similarity)
+        elif role == "neighbor":
+            joined += same_group
+            if similarity is not None:
+                neighbor_sims.append(similarity)
+    return {
+        "tripsort_version": __version__,
+        "clip_model": CLIP_MODEL_ID,
+        "settings": settings,
+        "shots": len(members),
+        "moments": len({truth[m][0] for m in members}),
+        "pairs": {
+            "precision": _share(tp, tp + fp) if tp + fp else 1.0,
+            "recall": _share(tp, tp + fn),
+        },
+        "burst_shots_missed": missed,
+        "neighbors_joined": joined,
+        "similarity_to_first_shot": {
+            "burst_shots": similarity_histogram(burst_sims),
+            "neighbors": similarity_histogram(neighbor_sims),
+        },
+        "seconds": round(time.perf_counter() - started, 1),
+    }
+
+
+_MISTAKES_STYLE = (
+    "body{font:15px/1.4 system-ui,sans-serif;margin:0;padding:16px;background:#f7f7f5}"
+    ".grid{display:flex;flex-wrap:wrap;gap:12px}"
+    "figure{margin:0;background:#fff;border:1px solid #ddd;border-radius:6px;padding:6px;"
+    "width:260px}img{width:100%}figcaption{font-size:13px}"
+    "@media (prefers-color-scheme:dark){body{background:#1b1b18;color:#eee}"
+    "figure{background:#2a2a26;border-color:#444}}"
+)
+
+
+def _write_mistakes(
+    root: Path,
+    project: Project,
+    rows: list[Row],
+    files: dict[str, int],
+    kept: dict[int, Prediction],
+) -> dict[str, int]:
+    """category_mistakes.html in the labeled set's folder: the checked dev rows whose primary
+    category is not their label, with the photo and its top shares. Only the labeler opens
+    it; what this returns is a count."""
+    shares: defaultdict[int, dict[str, float]] = defaultdict(dict)
+    for media_id, label, score in project.connection.execute(
+        "SELECT media_id, label, score FROM categories"
+    ):
+        shares[int(media_id)][str(label)] = float(score)
+    cards = []
+    with ZipCache(project.connection) as zips:
+        for row in rows:
+            if not (row.checked and row.split == "dev"):
+                continue
+            guess = _guess(row, files, kept)
+            if guess is None or guess.category is None or guess.category == row.category:
+                continue
+            thumb = ""
+            data = zips.read(guess.media_id, guess.sha256)
+            if data is not None:
+                with contextlib.suppress(UnreadableImageError):
+                    pixels = decode_oriented(data, max_side=THUMB_SIDE * 2)
+                    thumb = thumb_uri(Image.fromarray(pixels))
+            top = sorted(shares[guess.media_id].items(), key=lambda kv: -kv[1])[:3]
+            cards.append((row.row, row.category, guess.category, top, thumb))
+    parts = [
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>",
+        f"<title>Category mistakes</title><style>{_MISTAKES_STYLE}</style></head><body>",
+        f"<h1>Category mistakes on the dev rows: {len(cards)}</h1>",
+        "<p>Each photo with its labeled category and tripsort's, and tripsort's top shares. ",
+        "This page shows your photos: keep it private.</p><div class='grid'>",
+    ]
+    for number, labeled, predicted, top, thumb in cards:
+        shown = ", ".join(f"{label} {score:.2f}" for label, score in top)
+        image = f"<img src='{thumb}' alt=''>" if thumb else "<p>photo not found</p>"
+        parts.append(
+            f"<figure>{image}<figcaption>row {number}: labeled <b>{html.escape(labeled)}</b>, "
+            f"tripsort <b>{html.escape(predicted)}</b><br>{html.escape(shown)}</figcaption>"
+            "</figure>"
+        )
+    parts.append("</div></body></html>")
+    target = root / MISTAKES_HTML
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text("".join(parts) + "\n", encoding="utf-8")
+    tmp.replace(target)
+    return {"rows": len(cards)}
+
+
+PUBLIC_SAMPLE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "categories"
+
+
+def evaluate_public(sample: Path, work: Path) -> dict[str, Any]:
+    """The categories of a public sample (one folder per category of public-domain or CC0
+    photos, such as tests/fixtures/categories), through the whole pipeline with the real
+    models. A sanity check: the photos are clean web photos, not trip photos."""
+    started = time.perf_counter()
+    files = sorted(p for p in sample.rglob("*") if p.suffix.lower() in IMAGE_EXTENSIONS)
+    work.mkdir(parents=True, exist_ok=True)
+    archive = work / "public.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        for path in files:
+            zf.write(path, f"{path.parent.name}/{path.name}")
+    with Project.open(work / "project") as project:
+        project.ingest([archive])
+        project.analyze()
+        found = dict(
+            project.connection.execute(
+                "SELECT o.member_path, c.label FROM occurrences o JOIN categories c "
+                "ON c.media_id = o.media_id AND c.is_primary = 1"
+            ).fetchall()
+        )
+    pairs = [(m.split("/")[0], str(label)) for m, label in sorted(found.items())]
+    return {
+        "tripsort_version": __version__,
+        "clip_model": CLIP_MODEL_ID,
+        "photos": len(files),
+        "scored": len(pairs),
+        "categories": category_report(pairs, list(CATEGORIES)),
+        "seconds": round(time.perf_counter() - started, 1),
+    }
+
+
+def _config_overrides(path: Path) -> dict[str, str]:
+    """A tripsort.toml as TABLE.KEY overrides (the key dotted further for nested tables,
+    such as categories.food.prompts), so --set can still change single values."""
+    out: dict[str, str] = {}
+
+    def walk(keys: list[str], value: Any) -> None:
+        if isinstance(value, dict):
+            for key, inner in value.items():
+                walk([*keys, key], inner)
+        else:
+            out[".".join(_toml_key(k) for k in keys)] = _toml_value(value)
+
+    walk([], tomllib.loads(path.read_text(encoding="utf-8")))
+    return out
+
+
+def _toml_key(key: str) -> str:
+    bare = key.isascii() and key.replace("_", "").replace("-", "").isalnum()
+    return key if bare else json.dumps(key)
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    return repr(value)
+
+
 def _hidden_errors(run: Callable[[], dict[str, Any]]) -> dict[str, Any] | None:
     """Run ``run``; on an error print its type and code locations, never its message (it may
     name a photo or a person)."""
@@ -630,13 +1020,27 @@ def main(argv: list[str] | None = None) -> int:
     dedupe.add_argument("--work", type=Path, help="project folder to use (default: a temp folder)")
     dedupe.add_argument("--name", default="generated", help="baseline key (default: generated)")
     dedupe.add_argument("--write-baseline", action="store_true", help="save to eval/baseline.json")
+    bursts = sub.add_parser("bursts", help="burst grouping on make_synthetic_copies.py --bursts")
+    bursts.add_argument("data", type=Path, help="folder from make_synthetic_copies.py --bursts")
+    bursts.add_argument("--work", type=Path, help="project folder to use (default: a temp folder)")
+    bursts.add_argument("--set", action="append", default=[], metavar="TABLE.KEY=VALUE")
+    bursts.add_argument("--name", default="generated", help="baseline key (default: generated)")
+    bursts.add_argument("--write-baseline", action="store_true", help="save to eval/baseline.json")
+    public = sub.add_parser("public", help="categories of a public sample, with the real models")
+    public.add_argument("sample", type=Path, nargs="?", default=PUBLIC_SAMPLE)
+    public.add_argument("--work", type=Path, help="project folder to use (default: a temp folder)")
+    public.add_argument("--name", default="public_sample", help="baseline key")
+    public.add_argument("--write-baseline", action="store_true", help="save to eval/baseline.json")
     for name, text in (
         ("prelabel", "write labels.csv and labels.html into the labeled set's folder"),
         ("people", "per-person precision and recall on the checked rows of labels.csv"),
+        ("categories", "per-category precision and recall, and the selfie hint"),
     ):
         p = sub.add_parser(name, help=text)
         p.add_argument("--refs", type=Path, help="refs folder: one photo per friend")
         p.add_argument("--work", type=Path, help="keep zips and index here between runs")
+        p.add_argument("--labeled-set", type=Path, help="default: the TRIPSORT_EVAL_DIR folder")
+        p.add_argument("--config", type=Path, help="a tripsort.toml to use, such as prompts")
         p.add_argument(
             "--set",
             action="append",
@@ -646,10 +1050,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         if name == "prelabel":
             p.add_argument("--force", action="store_true", help="replace an existing labels.csv")
+            p.add_argument("--categories-only", action="store_true", help="a set with no people")
         else:
+            default_name = "private_dev" if name == "people" else "private_categories_dev"
             p.add_argument("--split", choices=("dev", "test"), default="dev")
-            p.add_argument("--name", default="private_dev", help="baseline key")
+            p.add_argument("--name", default=default_name, help="baseline key")
             p.add_argument("--write-baseline", action="store_true")
+        if name == "categories":
+            p.add_argument("--mistakes", action="store_true", help=f"write {MISTAKES_HTML}")
     args = parser.parse_args(argv)
 
     if args.command == "dedupe":
@@ -658,14 +1066,46 @@ def main(argv: list[str] | None = None) -> int:
         if args.write_baseline:
             _save_baseline("dedupe", args.name, result)
         return 0
+    if args.command == "public":
+        result = _with_work(args.work, lambda w: evaluate_public(args.sample, w))
+        print(json.dumps(result, indent=2))
+        if args.write_baseline:
+            _save_baseline("categories", args.name, result)
+        return 0
+    if args.command == "bursts":
+        burst_overrides = dict(item.split("=", 1) for item in args.set)
+        result = _with_work(args.work, lambda w: evaluate_bursts(args.data, w, burst_overrides))
+        print(json.dumps(result, indent=2))
+        if args.write_baseline:
+            _save_baseline("bursts", args.name, result)
+        return 0
 
-    root = eval_dir()
-    overrides = dict(item.split("=", 1) for item in args.set)
+    root = args.labeled_set if args.labeled_set is not None else eval_dir()
+    if not root.is_dir():
+        raise SystemExit("the labeled set is not a folder")
+    overrides = _config_overrides(args.config) if args.config is not None else {}
+    overrides.update(item.split("=", 1) for item in args.set)
     if args.command == "prelabel":
         outcome = _hidden_errors(
             lambda: _with_work(
                 args.work,
-                lambda w: prelabel(root, w, args.refs, overrides, force=args.force),
+                lambda w: prelabel(
+                    root,
+                    w,
+                    args.refs,
+                    overrides,
+                    force=args.force,
+                    categories_only=args.categories_only,
+                ),
+            )
+        )
+    elif args.command == "categories":
+        outcome = _hidden_errors(
+            lambda: _with_work(
+                args.work,
+                lambda w: evaluate_categories(
+                    root, w, args.refs, args.split, overrides, mistakes=args.mistakes
+                ),
             )
         )
     else:
@@ -677,8 +1117,10 @@ def main(argv: list[str] | None = None) -> int:
     if outcome is None:
         return 1
     print(json.dumps(outcome, indent=2))
-    if args.command == "people" and args.write_baseline and "people" in outcome:
-        _save_baseline("people", args.name, outcome)
+    section = args.command
+    saving = getattr(args, "write_baseline", False)
+    if saving and section in ("people", "categories") and section in outcome:
+        _save_baseline(section, args.name, outcome)
     return 0
 
 

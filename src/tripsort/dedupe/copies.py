@@ -256,3 +256,17 @@ def rebuild_copy_groups(conn: sqlite3.Connection, thresholds: Thresholds) -> Cop
         copies=len(copies),
         bytes_saved=sum(sizes[media_id] for media_id in copies),
     )
+
+
+def kept_images(conn: sqlite3.Connection) -> set[int]:
+    """Images in all/: decodable, in some zip, and not a copy of another photo."""
+    return {
+        int(media_id)
+        for (media_id,) in conn.execute(
+            "SELECT id FROM media WHERE kind = 'image' AND status = 'ok' "
+            "AND id IN (SELECT media_id FROM occurrences) "
+            "AND id NOT IN (SELECT gm.media_id FROM group_members gm "
+            "               JOIN media_groups g ON g.id = gm.group_id "
+            "               WHERE g.kind = 'copy' AND gm.is_keeper = 0)"
+        )
+    }

@@ -56,8 +56,12 @@ def build_sources(root: Path, out: Path) -> list[Source]:
     """Zip each subfolder of ``root`` into ``out`` (stored, not compressed), reusing zips
     built earlier so their fingerprints, and the index, stay valid."""
     folders = sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.name)
+    if not folders and photo_files(root):
+        folders = [root]  # a flat folder of photos is one source
     if not folders:
-        raise SystemExit("the labeled set has no subfolders of photos")
+        raise SystemExit(
+            "the labeled set has no photos (one subfolder per phone, or a flat folder)"
+        )
     if len(folders) > 26:
         raise SystemExit("the labeled set has more than 26 subfolders")
     out.mkdir(parents=True, exist_ok=True)
