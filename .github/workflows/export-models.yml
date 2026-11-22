@@ -1,14 +1,15 @@
 name: export models
 
-# Exports CLIP ViT-B/32 (OpenAI weights) to ONNX with tools/export_clip.py, makes int8
-# versions with tools/quantize.py, and puts the files on a GitHub pre-release of this
-# repository. That release holds model files only: it is never a tripsort version and never
-# marked latest, and its tag does not start with "v", so release.yml does not run. tripsort
-# pins each file's size and SHA-256 in src/tripsort/models/registry.py. A release that
-# exists is never changed; a new export needs a new tag.
+# Makes the int8 CLIP image encoder with tools/quantize.py from the fp32 image encoder of the
+# models-clip-1 release (exported to ONNX by tools/export_clip.py in an earlier version of this
+# workflow), and puts it on a GitHub pre-release of this repository. A model release holds
+# model files only: it is never a tripsort version and never marked latest, and its tag does
+# not start with "v", so release.yml does not run. tripsort pins each file's size and SHA-256
+# in src/tripsort/models/registry.py. A release that exists is never changed; new files need a
+# new tag.
 
 on:
-  workflow_dispatch: # run by hand; a new export needs a new tag (TAG below)
+  workflow_dispatch: # run by hand; new files need a new tag (TAG below)
 
 permissions: {}
 
@@ -18,13 +19,14 @@ concurrency:
 
 jobs:
   export:
-    name: export CLIP to ONNX
+    name: quantize the CLIP image encoder
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     permissions:
       contents: write # creates the model release
     env:
-      TAG: models-clip-1
+      TAG: models-clip-2
+      INT8: clip-vit-b-32-openai-image-int8-per-channel.onnx
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,11 +47,19 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Export to ONNX (checked against PyTorch)
+      - name: Download the fp32 image encoder (checked against its pinned SHA-256)
         if: steps.check.outputs.exists == 'false'
-        run: uv run tools/export_clip.py out --reference-images tests/fixtures/paintings
+        run: |
+          uv sync --locked
+          mkdir out
+          uv run python -c "
+          import shutil
+          from tripsort.models.download import ensure_models
+          from tripsort.models.registry import CLIP_IMAGE_FP32 as fp32
+          shutil.copy(ensure_models([fp32])[fp32.name], 'out/' + fp32.filename)
+          "
 
-      - name: Make the int8 versions
+      - name: Make the int8 version
         if: steps.check.outputs.exists == 'false'
         run: uv run tools/quantize.py out
 
@@ -59,7 +69,7 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/openai/CLIP/main/LICENSE -o out/LICENSE-CLIP.txt
           grep -q "MIT License" out/LICENSE-CLIP.txt
           cd out
-          sha256sum *.onnx *.gz LICENSE-CLIP.txt | tee SHA256SUMS
+          sha256sum "$INT8" LICENSE-CLIP.txt | tee SHA256SUMS
           ls -l
 
       - name: Create the model release
@@ -69,13 +79,13 @@ jobs:
             echo "Model files for tripsort, not a tripsort release. tripsort downloads the ones it"
             echo "needs on first use and checks each file's size and SHA-256 before using it."
             echo
-            echo "CLIP ViT-B/32 with OpenAI's weights (MIT license, see LICENSE-CLIP.txt), exported"
-            echo "to ONNX with tools/export_clip.py and quantized with tools/quantize.py."
-            echo
-            echo "- image encoder: pixel_values float32 [N, 3, 224, 224] to image_embeds [N, 512]"
-            echo "- text encoder: input_ids int64 [N, 77] to text_embeds [N, 512]"
-            echo "- int8 versions of both; clip-bpe-vocab-16e6.txt.gz is the tokenizer's vocabulary"
-            echo "- export.json and quantize.json: versions, checks against PyTorch, int8 drift"
+            echo "The int8 CLIP ViT-B/32 image encoder (OpenAI's weights, MIT license, see"
+            echo "LICENSE-CLIP.txt), quantized by tools/quantize.py from"
+            echo "clip-vit-b-32-openai-image-fp32.onnx of the models-clip-1 release: MatMul and Gemm"
+            echo "weights in int8 with one scale per output channel and reduce_range, inputs"
+            echo "quantized at run time; pixel_values float32 [N, 3, 224, 224] to image_embeds"
+            echo "[N, 512]. The fp32 encoders and the tokenizer's vocabulary stay in models-clip-1."
+            echo "quantize.json: versions, settings, and drift from fp32."
             echo
             echo "Built from $GITHUB_SHA by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo
@@ -86,10 +96,10 @@ jobs:
             echo '```'
           } > notes.md
           gh release create "$TAG" \
-            out/*.onnx out/*.gz out/LICENSE-CLIP.txt out/SHA256SUMS out/export.json out/quantize.json \
+            "out/$INT8" out/LICENSE-CLIP.txt out/SHA256SUMS out/quantize.json \
             --repo "$GITHUB_REPOSITORY" \
             --target main \
             --prerelease \
             --latest=false \
-            --title "Model files: CLIP ViT-B/32 ONNX (not a tripsort release)" \
+            --title "Model files: CLIP ViT-B/32 int8 image encoder, per channel (not a tripsort release)" \
             --notes-file notes.md
