@@ -43,6 +43,11 @@ Issues = "https://github.com/logn1602/tripsort/issues"
 [project.scripts]
 tripsort = "tripsort.cli:app"
 
+[project.optional-dependencies]
+video = [
+    "av>=18.1,<19",
+]
+
 [build-system]
 requires = ["uv_build>=0.11.2,<0.12.0"]
 build-backend = "uv_build"

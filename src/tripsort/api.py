@@ -88,6 +88,8 @@ class AnalyzeResult:
     categories: CategoryStats = field(default_factory=CategoryStats)
     bursts: BurstStats = field(default_factory=BurstStats)
     culling: CullStats = field(default_factory=CullStats)
+    live_photos: int = 0  # Live Photo motion clips paired with their stills
+    videos_with_people: int = 0
 
     def summary(self, project: str | None = None) -> str:
         """The summary. ``project`` is how its commands name the project folder, such as the
@@ -121,6 +123,11 @@ class AnalyzeResult:
                 "(see the messages above and manifest.json)."
             )
         lines.extend(_category_lines(self.categories, self.bursts, self.culling))
+        if self.live_photos:
+            lines.append(
+                f"Paired {count(self.live_photos, 'Live Photo')}: each motion clip goes next to "
+                "its still in all/, and nowhere else."
+            )
         lines.extend(_people_lines(self.people, project))
         return "\n".join(lines)
 
@@ -135,6 +142,12 @@ def _category_lines(c: CategoryStats, b: BurstStats, q: CullStats) -> list[str]:
             f"Sorted {count(c.scored, 'photo')} by category: "
             f"{', '.join(sorted_into) if sorted_into else 'none fits one'}; "
             f"{c.photos.get(OTHER, 0):,} other."
+        )
+    if any(c.videos.values()):
+        held = [f"{n:,} {label}" for label, n in c.videos.items() if label != OTHER and n]
+        lines.append(
+            f"Sorted {count(sum(c.videos.values()), 'video')} by category: "
+            f"{', '.join(held) if held else 'none fits one'}; {c.videos.get(OTHER, 0):,} other."
         )
     if c.not_embedded:
         lines.append(
@@ -271,7 +284,12 @@ class Project:
 
         with self._run("ingest") as run:
             result = ingest_zips(
-                self._conn, paths, progress=progress, faces=load_faces, clip=load_clip
+                self._conn,
+                paths,
+                progress=progress,
+                faces=load_faces,
+                clip=load_clip,
+                video=self.config.video,
             )
             result.face_problem = face_problem[0] if face_problem else None
             result.faces_pending = pending_scans(
@@ -293,6 +311,8 @@ class Project:
         from tripsort.clip.categorize import analyze_categories
         from tripsort.cull.analysis import analyze_culling
         from tripsort.faces.analysis import analyze_people  # pulls in scikit-learn
+        from tripsort.video.live_photos import analyze_live_photos
+        from tripsort.video.people import analyze_video_people
 
         with self._run("analyze") as run:
             started = time.perf_counter()
@@ -300,9 +320,11 @@ class Project:
             rebuild_copy_groups(self._conn, self.config.thresholds)
             try:
                 with transaction(self._conn):
+                    live_photos = analyze_live_photos(self._conn, self.config.video)
                     # categories first: the shot types use their selfie hint
                     categories = analyze_categories(self._conn, self.config, self.text_encoder)
                     people = analyze_people(self._conn, self.config.people)
+                    in_videos = analyze_video_people(self._conn, self.config)
                     bursts = analyze_bursts(self._conn, self.config.thresholds)
                     culling = analyze_culling(self._conn, self.config)
             finally:
@@ -320,6 +342,8 @@ class Project:
             categories,
             bursts,
             culling,
+            live_photos,
+            in_videos.videos,
         )
 
     def text_encoder(self, progress: Progress | None = None) -> "TextEncoder":

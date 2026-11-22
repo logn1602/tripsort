@@ -115,6 +115,12 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
         if reason is not None:
             reject[int(media_id)] = str(reason)
     sha_of = {int(i): str(s) for i, s in conn.execute("SELECT id, sha256 FROM media")}
+    frames_of = {
+        int(media_id): int(frames)
+        for media_id, frames in conn.execute(
+            "SELECT media_id, MAX(frames) FROM video_scans WHERE status = 'ok' GROUP BY media_id"
+        )
+    }
     motion_of: dict[int, str] = {}  # motion clip -> its still's SHA-256
     motion_clip: dict[int, str] = {}  # still -> its motion clip's SHA-256
     for motion, still in conn.execute("SELECT motion_id, still_id FROM live_photos"):
@@ -125,7 +131,7 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
     for row in conn.execute(
         "SELECT id, sha256, kind, format, bytes, width, height, taken_at, tz_offset, "
         "taken_at_source, camera_make, camera_model, lens_model, phash, status, note, "
-        "shot, is_selfie FROM media ORDER BY COALESCE(taken_at, ''), sha256"
+        "shot, is_selfie, duration_s FROM media ORDER BY COALESCE(taken_at, ''), sha256"
     ):
         media_id = int(row["id"])
         if media_id not in occurrences:
@@ -166,6 +172,8 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
                 "reject": reject.get(media_id),
                 "motion_clip": motion_clip.get(media_id),
                 "motion_of": motion_of.get(media_id),
+                "duration_s": row["duration_s"],
+                "frames": frames_of.get(media_id),
                 "paths": paths.get(media_id, []),
                 "occurrences": occurrences[media_id],
             }

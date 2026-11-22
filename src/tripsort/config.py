@@ -52,6 +52,10 @@ _RANGES: dict[str, tuple[float, float]] = {
     "reject_min_bright_frac": (0.0, 1.0),
     "reject_max_detail": (0.0, 100_000.0),
     "burst_tie_sharpness": (0.0, 1.0),
+    "frame_every_seconds": (0.1, 3600.0),
+    "max_frames": (1, 1000),
+    "live_photo_max_seconds": (0.0, 60.0),
+    "person_min_frames": (1, 1000),
 }
 # Allowed values for each text setting.
 _CHOICES: dict[str, tuple[str, ...]] = {"cluster_method": CLUSTER_METHODS}
@@ -99,11 +103,22 @@ class PeopleSettings:
 
 
 @dataclass(frozen=True)
+class VideoSettings:
+    """How videos are sampled (at ingest) and read (in ``analyze``)."""
+
+    frame_every_seconds: float
+    max_frames: int
+    live_photo_max_seconds: float
+    person_min_frames: int
+
+
+@dataclass(frozen=True)
 class Config:
     """The effective configuration of a project."""
 
     thresholds: Thresholds
     people: PeopleSettings
+    video: VideoSettings
     categories: dict[str, tuple[str, ...]]  # name -> prompts, in config order; has OTHER
 
     def to_dict(self) -> dict[str, Any]:
@@ -241,6 +256,7 @@ def _build(data: dict[str, Any], where: str) -> Config:
         return Config(
             thresholds=_section(Thresholds, data["thresholds"]),
             people=_section(PeopleSettings, data["people"]),
+            video=_section(VideoSettings, data["video"]),
             categories=categories,
         )
     except (KeyError, TypeError, ValueError) as exc:  # pragma: no cover - packaged file is tested

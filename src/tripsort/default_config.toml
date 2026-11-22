@@ -47,6 +47,15 @@ selfie_min_score = 1.0
 selfie_prompts = ["a selfie", "a selfie taken with a phone's front camera"]
 not_selfie_prompts = ["a photo of people taken by someone else", "a photo of a person taken from a distance"]
 
+[video]
+# Videos need the [video] extra (PyAV); without it they are checked for exact duplicates only.
+# Frames are sampled once, at ingest, for faces and CLIP; a new sampling samples every video
+# again.
+frame_every_seconds = 2.0          # the first frame, then one every this many seconds
+max_frames = 30                    # at most this many per clip, spread evenly over a longer one
+live_photo_max_seconds = 5.0       # a video named like a still beside it is that Live Photo's motion if no longer
+person_min_frames = 2              # a person is in a video when matched in at least this many frames
+
 [categories]
 # Each [categories.<name>] table is a category, sorted into categories/<name>/. A photo's
 # score for a category is its average CLIP similarity to the category's prompts, and a

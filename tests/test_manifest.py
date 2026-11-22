@@ -36,6 +36,8 @@ FILE_FIELDS = {
     "reject": (str, type(None)),
     "motion_clip": (str, type(None)),
     "motion_of": (str, type(None)),
+    "duration_s": (float, type(None)),
+    "frames": (int, type(None)),
     "paths": list,
     "occurrences": list,
 }

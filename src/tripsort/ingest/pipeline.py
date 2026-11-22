@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 
 from tripsort.clip.store import ClipBatch, pending_clip_scans
 from tripsort.clip.types import CLIP_MODEL_ID, ClipPixels, ImageEncoder
+from tripsort.config import VideoSettings
 from tripsort.cull.quality import QUALITY_VERSION, Quality, store_quality
 from tripsort.faces.store import pending_scans, store_scan
 from tripsort.faces.types import FACE_MODEL_ID, FaceAnalyzer, FaceScan
@@ -39,10 +40,12 @@ from tripsort.ingest.zip_reader import (
 )
 from tripsort.progress import NullProgress, Progress
 from tripsort.stats import count
+from tripsort.video import sample as video_sample
+from tripsort.video.scan import VideoScanStats, pending_videos, scan_videos, video_scan_id
 
 BATCH_SIZE = 50
 MAX_BUFFERED_IMAGE_BYTES = 512 * 1024 * 1024
-VIDEO_NOTE = "video: checked for exact duplicates only until video support arrives"
+VIDEO_NOTE = "video: checked for exact duplicates only; the [video] extra (PyAV) samples it"
 _VIDEO_FORMATS = {".mp4": "MP4", ".m4v": "MP4", ".mov": "MOV"}
 
 
@@ -84,6 +87,8 @@ class IngestResult:
     clip_caught_up: int = 0  # of those, photos from earlier ingests
     clip_pending: int = 0  # photos still waiting for a CLIP embedding after this run
     clip_problem: str | None = None  # why no CLIP embeddings were made at all
+    videos: VideoScanStats = field(default_factory=VideoScanStats)
+    videos_waiting: int = 0  # videos not sampled yet (no PyAV, or no models)
     peak_rss_bytes: int | None = None
 
     @property
@@ -111,6 +116,20 @@ class IngestResult:
                 parts.append(f"{report.unreadable:,} unreadable")
             verb = "resumed" if report.status == "resumed" else "read"
             lines.append(f"{report.zip_name} ({report.label}): {verb}, {', '.join(parts)}")
+        v = self.videos
+        if v.sampled:
+            lines.append(
+                f"Sampled {count(v.sampled, 'video')} ({count(v.frames, 'frame')}) for faces "
+                "and CLIP."
+            )
+        if v.failed:
+            lines.append(f"{count(v.failed, 'video')} could not be read (see manifest.json).")
+        if self.videos_waiting and not video_sample.available():
+            lines.append(
+                f"{count(self.videos_waiting, 'video')} checked for exact duplicates only; "
+                "install the video extra (pip install 'tripsort[video]') to find people and "
+                "categories in them."
+            )
         if self.face_problem:
             lines.append(f"Faces were not scanned: {self.face_problem}")
         if self.faces_caught_up:
@@ -166,6 +185,7 @@ def ingest_zips(
     batch_size: int = BATCH_SIZE,
     faces: Callable[[], FaceAnalyzer | None] | None = None,
     clip: Callable[[], ImageEncoder | None] | None = None,
+    video: VideoSettings | None = None,
 ) -> IngestResult:
     """Ingest ``paths`` into the index behind ``conn``, then scan for faces, and embed with
     CLIP, the photos that have neither yet. Raises ``ZipError`` before any work if a path is
@@ -173,7 +193,8 @@ def ingest_zips(
 
     ``faces`` loads the face analyzer and ``clip`` the CLIP image encoder (each returns None
     when it cannot). Each is called once, before the first photo is read, and only when
-    there is something for it to do.
+    there is something for it to do. With ``video`` and PyAV installed, videos are probed
+    and sampled after the photos.
     """
     started = time.perf_counter()
     run = _Run(conn, progress or NullProgress(), batch_size)
@@ -204,9 +225,14 @@ def ingest_zips(
             work.append((source, source_id, report, pending))
 
         has_new = any(pending for *_, pending in work)
-        if faces is not None and (has_new or pending_scans(conn, FACE_MODEL_ID)):
+        videos_due = (
+            video is not None
+            and video_sample.available()
+            and bool(pending_videos(conn, video_scan_id(FACE_MODEL_ID, CLIP_MODEL_ID, video)))
+        )
+        if faces is not None and (has_new or videos_due or pending_scans(conn, FACE_MODEL_ID)):
             run.faces = faces()  # may download the models, with a progress bar of its own
-        if clip is not None and (has_new or pending_clip_scans(conn, CLIP_MODEL_ID)):
+        if clip is not None and (has_new or videos_due or pending_clip_scans(conn, CLIP_MODEL_ID)):
             encoder = clip()  # the same
             run.clip = ClipBatch(conn, encoder) if encoder is not None else None
         run.progress.start("ingest", sum(m.size for *_, pending in work for m in pending), "bytes")
@@ -220,6 +246,16 @@ def ingest_zips(
     embedded_inline = run.clip.embedded if run.clip is not None else 0
     _scan_pending(run)
     embedded = run.clip.embedded if run.clip is not None else 0
+    videos = VideoScanStats()
+    if video is not None and video_sample.available():
+        encoder = run.clip.encoder if run.clip is not None else None
+        videos = scan_videos(conn, video, run.faces, encoder, run.progress)
+    (waiting,) = conn.execute(
+        "SELECT COUNT(*) FROM media m WHERE m.kind = 'video' AND m.status = 'ok' "
+        "AND m.id IN (SELECT media_id FROM occurrences) AND NOT EXISTS ("
+        "  SELECT 1 FROM video_scans s WHERE s.media_id = m.id "
+        "  AND s.status IN ('ok', 'live_photo', 'not_decoded'))"
+    ).fetchone()
     return IngestResult(
         sources=reports,
         decoded=run.decoded,
@@ -231,6 +267,8 @@ def ingest_zips(
         faces_caught_up=run.faces_scanned - scanned_inline,
         clip_embedded=embedded,
         clip_caught_up=embedded - embedded_inline,
+        videos=videos,
+        videos_waiting=int(waiting),
     )
 
 
@@ -492,7 +530,8 @@ def _insert_media(run: _Run, report: SourceReport, member: Member, hashed: Hashe
     quality: Quality | None = None
     if member.kind == "video":
         suffix = PurePosixPath(member.path).suffix.lower()
-        values.update(kind="video", format=_VIDEO_FORMATS.get(suffix), note=VIDEO_NOTE)
+        note = None if video_sample.available() else VIDEO_NOTE
+        values.update(kind="video", format=_VIDEO_FORMATS.get(suffix), note=note)
     elif hashed.data is None:
         values.update(kind="image", note="too large to decode; checked for exact duplicates only")
         if run.faces is not None:

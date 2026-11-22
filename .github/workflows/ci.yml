@@ -43,7 +43,7 @@ jobs:
           key: face-models-${{ hashFiles('src/tripsort/models/registry.py') }}
 
       - name: Install the project
-        run: uv sync --locked
+        run: uv sync --locked --all-extras
 
       - name: Download the face models (checked against their pinned SHA-256)
         run: uv run tripsort models download

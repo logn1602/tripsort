@@ -8,6 +8,8 @@ from factories import camera_exif, jpeg, make_zip, patch_entry, photo
 import tripsort.ingest.pipeline as pipeline
 from tripsort.api import Project
 from tripsort.errors import ZipError
+from tripsort.ingest.pipeline import VIDEO_NOTE
+from tripsort.video import sample as video_sample
 
 
 def count(project: Project, table: str) -> int:
@@ -58,7 +60,8 @@ def test_media_rows(project: Project, trip: dict[str, Path]) -> None:
     assert (heic["format"], heic["camera_model"]) == ("HEIF", "iPhone 15")
     video = rows["DCIM/VID_20260714_101010.mp4"]
     assert (video["kind"], video["format"], video["phash"]) == ("video", "MP4", None)
-    assert "exact duplicates only" in video["note"]
+    # without PyAV a video is only checked for exact duplicates, and its note says so
+    assert video["note"] == (None if video_sample.available() else VIDEO_NOTE)
     broken = rows["DCIM/broken.jpg"]
     assert broken["status"] == "unreadable"
     assert "truncated" in broken["note"]

@@ -9,7 +9,7 @@ import re
 import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 
 from tripsort.index.db import transaction
@@ -103,15 +103,26 @@ class OccurrenceFacts:
 @dataclass(frozen=True)
 class ResolvedDate:
     taken_at: str | None
-    source: str | None  # 'exif', 'filename', 'zip_mtime'
+    source: str | None  # 'exif', 'video', 'filename', 'zip_mtime'
     tz_offset: str | None
 
 
 def resolve_date(
-    exif_datetime: str | None, exif_offset: str | None, occurrences: list[OccurrenceFacts]
+    exif_datetime: str | None,
+    exif_offset: str | None,
+    occurrences: list[OccurrenceFacts],
+    video_created: str | None = None,
+    video_offset: str | None = None,
+    local_offset: str | None = None,
 ) -> ResolvedDate:
+    """EXIF first; then a video's creation time when its container gives the local time
+    (Apple's, with its offset); then a date in a file name; then a video's UTC creation
+    time, moved to ``local_offset`` (the photos' usual offset) when there is one; then the
+    zip's time."""
     if exif_datetime is not None:
         return ResolvedDate(exif_datetime, "exif", exif_offset)
+    if video_created is not None and video_offset is not None:
+        return ResolvedDate(video_created, "video", video_offset)
     ordered = sorted(occurrences, key=lambda occ: (occ.label, occ.member_path))
     named = [
         found
@@ -121,6 +132,10 @@ def resolve_date(
     if named:
         best = next((found for found in named if found.has_time), named[0])
         return ResolvedDate(best.iso, "filename", best.tz_offset)
+    if video_created is not None:
+        if local_offset is None:
+            return ResolvedDate(video_created, "video", "+00:00")
+        return ResolvedDate(_shift(video_created, local_offset), "video", local_offset)
     mtimes = sorted(occ.zip_mtime for occ in occurrences if occ.zip_mtime is not None)
     if mtimes:
         return ResolvedDate(mtimes[0], "zip_mtime", None)
@@ -135,12 +150,24 @@ def resolve_dates(conn: sqlite3.Connection) -> dict[str, int]:
         "FROM occurrences o JOIN sources s ON s.id = o.source_id"
     ).fetchall():
         facts[media_id].append(OccurrenceFacts(label, member_path, zip_mtime))
+    offsets = Counter(
+        str(offset)
+        for (offset,) in conn.execute(
+            "SELECT exif_offset FROM media "
+            "WHERE exif_offset IS NOT NULL AND exif_datetime IS NOT NULL"
+        )
+    )
+    local_offset = offsets.most_common(1)[0][0] if offsets else None
     counts: Counter[str] = Counter()
     updates: list[tuple[str | None, str | None, str | None, int]] = []
-    for media_id, exif_datetime, exif_offset, taken_at, source, tz_offset in conn.execute(
-        "SELECT id, exif_datetime, exif_offset, taken_at, taken_at_source, tz_offset FROM media"
+    for row in conn.execute(
+        "SELECT id, exif_datetime, exif_offset, taken_at, taken_at_source, tz_offset, "
+        "video_created, video_offset FROM media"
     ).fetchall():
-        resolved = resolve_date(exif_datetime, exif_offset, facts.get(media_id, []))
+        media_id, exif_datetime, exif_offset, taken_at, source, tz_offset = row[:6]
+        resolved = resolve_date(
+            exif_datetime, exif_offset, facts.get(media_id, []), row[6], row[7], local_offset
+        )
         counts[resolved.source or "none"] += 1
         if (resolved.taken_at, resolved.source, resolved.tz_offset) != (
             taken_at,
@@ -155,3 +182,11 @@ def resolve_dates(conn: sqlite3.Connection) -> dict[str, int]:
                 updates,
             )
     return dict(counts)
+
+
+def _shift(utc: str, offset: str) -> str:
+    """A UTC time (ISO 8601, no zone) as local time at ``offset`` (+HH:MM or -HH:MM)."""
+    sign = -1 if offset.startswith("-") else 1
+    hours, minutes = (int(part) for part in offset.lstrip("+-").split(":"))
+    moment = datetime.fromisoformat(utc) + sign * timedelta(hours=hours, minutes=minutes)
+    return moment.isoformat(timespec="seconds")

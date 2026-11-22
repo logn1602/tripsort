@@ -21,7 +21,7 @@ class ProjectStats:
     images: int
     videos: int
     unreadable: int
-    not_analyzed: int  # kept files without a pHash: videos, oversized images
+    not_analyzed: int  # kept oversized images, and kept videos not sampled (no Live Photos)
     skipped: dict[str, int]  # reason -> number of zip entries
     bytes_in: int
     bytes_kept: int
@@ -47,7 +47,11 @@ def project_stats(conn: sqlite3.Connection) -> ProjectStats:
     kept, images, videos, not_analyzed, kept_bytes = conn.execute(
         "SELECT COUNT(*), "
         "       COALESCE(SUM(kind = 'image'), 0), COALESCE(SUM(kind = 'video'), 0), "
-        "       COALESCE(SUM(phash IS NULL), 0), COALESCE(SUM(bytes), 0) "
+        "       COALESCE(SUM(phash IS NULL AND (kind = 'image' OR ("
+        "         id NOT IN (SELECT motion_id FROM live_photos) AND NOT EXISTS ("
+        "           SELECT 1 FROM video_scans s WHERE s.media_id = media.id "
+        "           AND s.status IN ('ok', 'live_photo'))))), 0), "
+        "       COALESCE(SUM(bytes), 0) "
         "FROM media WHERE status = 'ok' AND id IN (SELECT media_id FROM occurrences) "
         "AND id NOT IN (SELECT gm.media_id FROM group_members gm "
         "               JOIN media_groups g ON g.id = gm.group_id "
