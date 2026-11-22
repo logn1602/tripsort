@@ -1146,6 +1146,7 @@ def video_prelabel(
             can_save=not problems,
             csv_name=VIDEO_LABELS_CSV,
         )
+        refs_report = _refs_report(project, refs, named)  # reads the index: before it closes
     return {
         "videos": len(rows),
         "dev": sum(r.split == "dev" for r in rows),
@@ -1156,7 +1157,7 @@ def video_prelabel(
         "videos_with_people": sum(bool(g.people) for g in guesses.values()),
         "video_labels_csv": state,
         "video_labels_html": "written",
-        **_refs_report(project, refs, named),
+        **refs_report,
     }
 
 

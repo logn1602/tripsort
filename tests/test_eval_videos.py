@@ -33,19 +33,24 @@ def test_videos_are_labeled_and_scored(
     (flat / "kind_view.mp4").write_bytes(clip(5.0, HUES["animals"][0]))
     prompts = tmp_path / "prompts.toml"
     prompts.write_text(PROMPTS, encoding="utf-8")
+    refs = tmp_path / "refs"
+    refs.mkdir()
+    (refs / "sam.jpg").write_bytes(jpeg(face_photo([(1, 0.3, 0.2, 0.4)], seed=99)))
     common = ["--labeled-set", flat, "--work", tmp_path / "work", "--config", prompts]
+    common += ["--refs", refs]
 
     code, out = run(capsys, "prelabel", *common, "--videos")
     assert code == 0
     made = json.loads(out)
     assert (made["videos"], made["videos_without_strip"], made["videos_with_people"]) == (2, 0, 1)
+    assert made["refs"]["named"] == 1  # the refs report reads the index before it closes
     page = (flat / "video_labels.html").read_text(encoding="utf-8")
     assert "Save video_labels.csv" in page
     assert "Save labels.csv" not in page
     with (flat / "video_labels.csv").open(encoding="utf-8", newline="") as fp:
         rows = list(csv.DictReader(fp))
     friend = next(r for r in rows if SECRET in r["file"])
-    assert friend["people"].startswith("person_")  # tripsort's guess, to check
+    assert friend["people"] == "sam"  # tripsort's guess, named by the ref, to check
     assert friend["category"] == "other"
     for row in rows:  # the labeler: the friend is "sam"; the view is animals, not other
         row["checked"], row["split"] = "y", "dev"
