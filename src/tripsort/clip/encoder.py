@@ -3,6 +3,10 @@
 One process, four ONNX Runtime threads, and one copy of each model per run. The text
 encoder is only loaded for prompts whose embeddings are neither shipped with tripsort nor
 cached in the index, and is dropped once they are embedded.
+
+The image encoder runs the model on one photo at a time. The int8 model quantizes its inputs
+with one scale per model run, so photos sharing a run would move each other's embeddings; one
+at a time, a photo's embedding never depends on which photos came with it.
 """
 
 from pathlib import Path
@@ -35,10 +39,14 @@ class OnnxImageEncoder:
         self._session = _session(path, threads)
 
     def embed(self, batch: npt.NDArray[np.float32]) -> Embeddings:
+        """One embedding per photo, each from a model run of its own."""
         if len(batch) == 0:
             return np.zeros((0, 512), dtype=np.float32)
-        (out,) = self._session.run(["image_embeds"], {"pixel_values": batch})
-        return unit_rows(out)
+        rows = [
+            self._session.run(["image_embeds"], {"pixel_values": batch[i : i + 1]})[0]
+            for i in range(len(batch))
+        ]
+        return unit_rows(np.concatenate(rows))
 
 
 class OnnxTextEncoder:

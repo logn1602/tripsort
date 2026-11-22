@@ -9,11 +9,14 @@ from dataclasses import dataclass
 
 OPENCV_ZOO_COMMIT = "eb9f4f2d4b79b58e5513b5d25d5f0243a8357bf4"
 _OPENCV_ZOO = f"https://github.com/opencv/opencv_zoo/raw/{OPENCV_ZOO_COMMIT}/models"
-# CLIP ViT-B/32 with OpenAI's weights, exported to ONNX by tools/export_clip.py and
-# tools/quantize.py and published by .github/workflows/export-models.yml as a pre-release of
-# this repository that holds model files only.
+# CLIP ViT-B/32 with OpenAI's weights, on pre-releases of this repository that hold model
+# files only, published by .github/workflows/export-models.yml: the fp32 encoders and the
+# vocabulary, exported to ONNX by tools/export_clip.py, on models-clip-1; the int8 image
+# encoder, quantized from that fp32 file by tools/quantize.py, on models-clip-2.
 CLIP_RELEASE = "models-clip-1"
 _CLIP = f"https://github.com/logn1602/tripsort/releases/download/{CLIP_RELEASE}"
+CLIP_INT8_RELEASE = "models-clip-2"
+_CLIP_INT8 = f"https://github.com/logn1602/tripsort/releases/download/{CLIP_INT8_RELEASE}"
 
 
 @dataclass(frozen=True)
@@ -69,11 +72,11 @@ CLIP_IMAGE_FP32 = ModelFile(
 
 CLIP_IMAGE_INT8 = ModelFile(
     name="clip-image-int8",
-    version="vit-b-32-openai-1",
-    filename="clip-vit-b-32-openai-image-int8.onnx",
-    url=f"{_CLIP}/clip-vit-b-32-openai-image-int8.onnx",
-    sha256="0b2934646a257f911d4761b17858ddd6f7f86769039aab5768337695f0f44d3d",
-    size=95_549_247,
+    version="vit-b-32-openai-2",  # per-channel weight scales and reduce_range
+    filename="clip-vit-b-32-openai-image-int8-per-channel.onnx",
+    url=f"{_CLIP_INT8}/clip-vit-b-32-openai-image-int8-per-channel.onnx",
+    sha256="bdca7b7cb41df5464aaab51574fb9eaae59a14842a1dfcb99b958555fddf723e",
+    size=95_966_772,
     license="MIT",
     purpose="photo embeddings for categories, bursts, and selfies (int8)",
 )

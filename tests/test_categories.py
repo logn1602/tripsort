@@ -355,8 +355,8 @@ KNOWN_MISSES: dict[tuple[str, str], str] = {}
 # take a change of at least CLEAR_MARGIN to one category's score (100 times its average cosine
 # similarity, the softmax's input). ONNX Runtime's int8 math differs a little between CPUs, so
 # a closer call may land either way and is a non-strict xfail. Switching between the int8 and
-# fp32 image encoders changes 1 of these 100 calls (4 with the earlier prompts), never one
-# with a margin of 0.3 or more.
+# fp32 image encoders changes none of these 100 calls (the first int8 file changed up to 4,
+# each with a margin under 0.3).
 CLEAR_MARGIN = 1.0
 
 

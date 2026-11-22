@@ -19,14 +19,17 @@ at the pinned commit on 2026-11-19; check them again before changing a pin.
 ### CLIP
 
 CLIP ViT-B/32 with OpenAI's weights, exported to ONNX by `tools/export_clip.py` (open_clip_torch
-3.3.0, torch 2.14.1) and made int8 by `tools/quantize.py` (ONNX Runtime 1.31.1). The files are
-on the [`models-clip-1`](https://github.com/logn1602/tripsort/releases/tag/models-clip-1)
-pre-release of this repository, which holds model files only, together with the license
-(`LICENSE-CLIP.txt`), the export checks, and their SHA-256s.
+3.3.0, torch 2.14.1); the int8 image encoder is quantized from the fp32 one by
+`tools/quantize.py` (ONNX Runtime 1.31.1). The files are on two pre-releases of this
+repository that hold model files only, each with the license (`LICENSE-CLIP.txt`), the checks,
+and the SHA-256s: [`models-clip-1`](https://github.com/logn1602/tripsort/releases/tag/models-clip-1)
+(the fp32 encoders and the vocabulary) and
+[`models-clip-2`](https://github.com/logn1602/tripsort/releases/tag/models-clip-2) (the int8
+image encoder).
 
 | Model | File | Used for | License | Source |
 | --- | --- | --- | --- | --- |
-| CLIP ViT-B/32 image encoder, int8 (the default) | `clip-vit-b-32-openai-image-int8.onnx` | photo embeddings for categories and bursts | MIT, Copyright (c) 2021 OpenAI | [LICENSE](https://github.com/openai/CLIP/blob/main/LICENSE) |
+| CLIP ViT-B/32 image encoder, int8 (the default) | `clip-vit-b-32-openai-image-int8-per-channel.onnx` | photo embeddings for categories and bursts | MIT, Copyright (c) 2021 OpenAI | [LICENSE](https://github.com/openai/CLIP/blob/main/LICENSE) |
 | CLIP ViT-B/32 image encoder, fp32 (`TRIPSORT_CLIP_IMAGE=fp32`) | `clip-vit-b-32-openai-image-fp32.onnx` | the same, at full precision | MIT, Copyright (c) 2021 OpenAI | [LICENSE](https://github.com/openai/CLIP/blob/main/LICENSE) |
 | CLIP ViT-B/32 text encoder | `clip-vit-b-32-openai-text-fp32.onnx` | embeddings of prompts tripsort does not ship | MIT, Copyright (c) 2021 OpenAI | [LICENSE](https://github.com/openai/CLIP/blob/main/LICENSE) |
 | CLIP BPE vocabulary | `clip-bpe-vocab-16e6.txt.gz` | the text encoder's tokenizer | MIT, Copyright (c) 2021 OpenAI | [LICENSE](https://github.com/openai/CLIP/blob/main/LICENSE) |

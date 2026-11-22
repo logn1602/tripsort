@@ -33,8 +33,9 @@ PUBLIC_SAMPLE = FIXTURES / "categories"
 PUBLIC_FP32 = FIXTURES / "clip" / "public_fp32.json"
 
 # The lowest cosine similarity allowed between a public photo's int8 and fp32 embeddings. The
-# dev laptop, whose CPU has VNNI, gets 0.979 at the lowest. ONNX Runtime's int8 math takes
-# another path on CPUs without VNNI, where it can saturate, so every CI runner checks its own.
+# dev laptop, whose CPU has VNNI, gets 0.980 at the lowest; so do CI's x86 runners with and
+# without VNNI, and Apple M1 gets 0.976. ONNX Runtime's int8 math takes another path on CPUs
+# without VNNI, where it can saturate, and on ARM, so every CI runner checks its own.
 INT8_FLOOR = 0.97
 
 
@@ -99,6 +100,25 @@ def test_unit_rows() -> None:
 
 
 # embedding at ingest
+
+
+def test_the_image_encoder_runs_the_model_on_one_photo_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The int8 model picks one activation scale per run, so photos sharing a run would move
+    each other's embeddings."""
+    runs: list[int] = []
+
+    class Session:
+        def run(self, names: list[str], feed: dict[str, np.ndarray]) -> list[np.ndarray]:
+            runs.append(len(feed["pixel_values"]))
+            return [np.ones((len(feed["pixel_values"]), 512), np.float32)]
+
+    monkeypatch.setattr(tripsort.clip.encoder, "_session", lambda path, threads: Session())
+    encoder = tripsort.clip.encoder.OnnxImageEncoder(Path("model.onnx"), "a model")
+    batch = np.zeros((3, 3, IMAGE_SIZE, IMAGE_SIZE), np.float32)
+    assert encoder.embed(batch).shape == (3, 512)
+    assert runs == [1, 1, 1]
 
 
 def embeddings(project: Project) -> dict[int, np.ndarray]:
@@ -218,15 +238,29 @@ def test_the_image_encoders_match_open_clip_on_the_paintings() -> None:
         assert float((got * want).sum(axis=1).min()) >= floor, model.name
 
 
-def cpu_name() -> str:
-    """This CPU's name for the test log, since int8 math depends on it (and on Linux, whether
-    it has VNNI)."""
+def cpu_description() -> str:
+    """This CPU's model and whether it has VNNI, for the test log: ONNX Runtime's int8 math
+    takes another path without VNNI, so a pass on a CPU with VNNI covers no CPU without it."""
+    try:  # numpy's own table of the CPU's features: private, but in every numpy 2
+        from numpy._core._multiarray_umath import __cpu_features__ as features
+    except ImportError:
+        features = {}
+    if platform.machine().lower() in ("arm64", "aarch64"):
+        dot = "yes" if features.get("ASIMDDP") else "no"
+        return f"{cpu_model()}; ARM, so no VNNI; dot product instructions: {dot}"
+    flags = ""  # AVX-VNNI without AVX-512 (newer laptop CPUs) shows only in Linux's flags
+    if platform.system() == "Linux":
+        lines = Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines()
+        flags = next((line for line in lines if line.startswith("flags")), "")
+    vnni = features.get("AVX512VNNI") or "avx_vnni" in flags.split()
+    return f"{cpu_model()}; VNNI: {'yes' if vnni else 'no'}"
+
+
+def cpu_model() -> str:
     try:
         if platform.system() == "Linux":
             lines = Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines()
-            name = next(line.split(":", 1)[1].strip() for line in lines if "model name" in line)
-            flags = next((line for line in lines if line.startswith("flags")), "")
-            return f"{name}, VNNI {'yes' if 'vnni' in flags else 'no'}"
+            return next(line.split(":", 1)[1].strip() for line in lines if "model name" in line)
         if platform.system() == "Windows":
             import winreg
 
@@ -257,20 +291,16 @@ def test_int8_embeddings_stay_close_to_fp32_on_this_cpu(
 
     refs = json.loads(PUBLIC_FP32.read_text(encoding="utf-8"))
     assert refs["model_id"] == image_model_id(CLIP_IMAGE_FP32)
-    encoder = load_image_encoder(model=CLIP_IMAGE_INT8)
     names = sorted(refs["embeddings"])
-    cosines = []
-    for name in names:
-        # one photo per call: int8 picks one activation scale per batch, so batchmates move
-        # a photo's embedding too
-        pixels = clip_input(decode_oriented((PUBLIC_SAMPLE / name).read_bytes()))
-        vector = encoder.embed(pixels[np.newaxis])[0]
-        cosines.append(float(vector @ decode_vector(refs["embeddings"][name])))
+    batch = np.stack([clip_input(decode_oriented((PUBLIC_SAMPLE / n).read_bytes())) for n in names])
+    got = load_image_encoder(model=CLIP_IMAGE_INT8).embed(batch)
+    want = np.stack([decode_vector(refs["embeddings"][name]) for name in names])
+    cosines = (got * want).sum(axis=1)
     worst = int(np.argmin(cosines))
     record_property(
         "summary",
-        f"int8 against fp32 on this CPU ({cpu_name()}): lowest cosine {cosines[worst]:.4f}, "
-        f"mean {np.mean(cosines):.4f}, floor {INT8_FLOOR}",
+        f"int8 against fp32 on this CPU ({cpu_description()}): lowest cosine "
+        f"{cosines[worst]:.4f}, mean {cosines.mean():.4f}, floor {INT8_FLOOR}",
     )
     assert cosines[worst] >= INT8_FLOOR, f"{names[worst]}: {cosines[worst]:.4f}"
 

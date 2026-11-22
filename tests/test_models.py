@@ -55,6 +55,7 @@ def test_the_registry_pins_every_model() -> None:
     pinned = (
         f"https://github.com/opencv/opencv_zoo/raw/{registry.OPENCV_ZOO_COMMIT}/",  # a commit
         f"https://github.com/logn1602/tripsort/releases/download/{registry.CLIP_RELEASE}/",
+        f"https://github.com/logn1602/tripsort/releases/download/{registry.CLIP_INT8_RELEASE}/",
     )
     every = {*registry.ALL_MODELS, registry.CLIP_IMAGE_FP32, registry.CLIP_IMAGE_INT8}
     for model in every:

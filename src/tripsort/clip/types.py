@@ -10,7 +10,7 @@ from tripsort.models.registry import CLIP_IMAGE, CLIP_TEXT, ModelFile
 
 IMAGE_SIZE = 224
 EMBEDDING_SIZE = 512
-BATCH_SIZE = 16  # photos per image-encoder call
+BATCH_SIZE = 16  # photos handed to the image encoder at a time (it runs the model on each alone)
 # Changes to the preprocessing must change this, so every photo is embedded again.
 PREPROCESS = "center224-v1"
 

@@ -220,7 +220,7 @@ recall, with one photo wrongly put in animals. A view with friends in it goes to
 
 ### CLIP models
 
-The image encoder (95.5 MB, int8) downloads the first time photos are read, from a release of
+The image encoder (96.0 MB, int8) downloads the first time photos are read, from a release of
 this repository that holds model files only, and is used only when its SHA-256 matches.
 `TRIPSORT_CLIP_IMAGE=fp32` picks the full-precision encoder (351.5 MB), which scored the same
 on the labeled trip but is slower; a different encoder embeds every photo again on the next
@@ -344,14 +344,16 @@ real face and CLIP models on public-domain paintings and photos (see `tests/fixt
 they run when the models are downloaded (`uv run tripsort models download`), as in CI, and are
 skipped otherwise. Every other test uses stand-in models and needs no network.
 
-The CLIP files are exported to ONNX by `tools/export_clip.py` and made int8 by
-`tools/quantize.py` (both bring their own torch and open_clip; tripsort never depends on
-them), run by the `export models` workflow, which puts them on a GitHub pre-release of this
-repository; `src/tripsort/models/registry.py` pins their SHA-256. When the default prompts
-change, `uv run tools/embed_default_prompts.py` embeds them again (a test fails until then).
-Every CI runner also checks its int8 image embeddings of the public photos against fp32 ones
-(`uv run tools/embed_public_sample.py` writes those): ONNX Runtime's int8 math takes another
-path on CPUs without VNNI.
+The CLIP files were exported to ONNX by `tools/export_clip.py` (the `models-clip-1`
+pre-release of this repository), and the int8 image encoder is quantized from the fp32 one,
+per channel with `reduce_range`, by `tools/quantize.py` (`models-clip-2`). Both tools bring
+their own dependencies (torch and open_clip, or ONNX's quantizer), which tripsort never needs,
+and the `export models` workflow runs them; `src/tripsort/models/registry.py` pins every
+file's SHA-256. When the default prompts change, `uv run tools/embed_default_prompts.py`
+embeds them again (a test fails until then). Every CI runner also checks its int8 image
+embeddings of the public photos against fp32 ones (`uv run tools/embed_public_sample.py`
+writes those) and prints its CPU and whether it has VNNI: ONNX Runtime's int8 math takes
+another path without VNNI, and another again on ARM.
 
 ### Measuring dedupe
 
