@@ -18,6 +18,7 @@ from tripsort import __version__
 from tripsort.clip.store import pending_clip_scans
 from tripsort.clip.types import CLIP_MODEL_ID
 from tripsort.config import Config
+from tripsort.cull.quality import QUALITY_VERSION
 from tripsort.export.writer import TMP_SUFFIX
 from tripsort.faces.names import display_name
 from tripsort.faces.people import person_infos
@@ -89,13 +90,36 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
         if is_primary:
             primary[int(media_id)] = str(label)
     burst_of: dict[int, int] = {}
+    best_of: dict[int, bool] = {}  # burst shots: whether it is the burst's best
     for number, (group_id,) in enumerate(
         conn.execute("SELECT id FROM media_groups WHERE kind = 'burst' ORDER BY id").fetchall(), 1
     ):
-        for (media_id,) in conn.execute(
-            "SELECT media_id FROM group_members WHERE group_id = ?", (group_id,)
+        for media_id, is_keeper in conn.execute(
+            "SELECT media_id, is_keeper FROM group_members WHERE group_id = ?", (group_id,)
         ):
             burst_of[int(media_id)] = number
+            best_of[int(media_id)] = bool(is_keeper)
+    quality: dict[int, dict[str, float]] = {}
+    reject: dict[int, str] = {}
+    for media_id, sharpness, sharp_tiles, luma, dark, bright, reason in conn.execute(
+        "SELECT media_id, sharpness, sharp_tiles, luma_mean, dark_frac, bright_frac, reject "
+        "FROM quality"
+    ):
+        quality[int(media_id)] = {
+            "sharpness": round(float(sharpness), 1),
+            "sharp_tiles": round(float(sharp_tiles), 1),
+            "luma_mean": round(float(luma), 1),
+            "dark_frac": round(float(dark), 4),
+            "bright_frac": round(float(bright), 4),
+        }
+        if reason is not None:
+            reject[int(media_id)] = str(reason)
+    sha_of = {int(i): str(s) for i, s in conn.execute("SELECT id, sha256 FROM media")}
+    motion_of: dict[int, str] = {}  # motion clip -> its still's SHA-256
+    motion_clip: dict[int, str] = {}  # still -> its motion clip's SHA-256
+    for motion, still in conn.execute("SELECT motion_id, still_id FROM live_photos"):
+        motion_of[int(motion)] = sha_of[int(still)]
+        motion_clip[int(still)] = sha_of[int(motion)]
 
     files = []
     for row in conn.execute(
@@ -137,6 +161,11 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
                 "category": primary.get(media_id),
                 "category_scores": scores.get(media_id),
                 "burst": burst_of.get(media_id),
+                "burst_best": best_of.get(media_id),
+                "quality": quality.get(media_id),
+                "reject": reject.get(media_id),
+                "motion_clip": motion_clip.get(media_id),
+                "motion_of": motion_of.get(media_id),
                 "paths": paths.get(media_id, []),
                 "occurrences": occurrences[media_id],
             }
@@ -191,7 +220,12 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
         "thresholds": asdict(config.thresholds),
         "people_settings": asdict(config.people),
         "categories": {name: list(prompts) for name, prompts in config.categories.items()},
-        "analyzers": {"phash": PHASH_ALGORITHM, "faces": FACE_MODEL_ID, "clip": CLIP_MODEL_ID},
+        "analyzers": {
+            "phash": PHASH_ALGORITHM,
+            "faces": FACE_MODEL_ID,
+            "clip": CLIP_MODEL_ID,
+            "quality": QUALITY_VERSION,
+        },
         "people": [
             {"name": p.name, "photos": p.photos, "solo": p.solo, "named_by": p.named_by}
             for p in people
@@ -224,6 +258,12 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
             },
             "bursts": len(set(burst_of.values())),
             "photos_in_bursts": len(burst_of),
+            "best_shots": sum(best_of.values()),
+            "rejects": {
+                reason: sum(1 for r in reject.values() if r == reason)
+                for reason in ("dark", "blown_out", "blurry")
+            },
+            "live_photos": len(motion_of),
             "clip_not_embedded": pending_clip_scans(conn, CLIP_MODEL_ID),
         },
         "sources": sources,

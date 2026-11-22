@@ -146,3 +146,70 @@ def test_a_phase_2_index_is_upgraded_in_place(tmp_path: Path) -> None:
         assert {"faces", "face_scans", "people", "ref_images", "exported_media"} <= tables
     finally:
         conn.close()
+
+
+def schema(path: Path, version: int) -> sqlite3.Connection:
+    """A fresh index at ``version``, migrated only that far."""
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.execute("PRAGMA foreign_keys = ON")
+    for number, sql in db.migrations()[:version]:
+        bootstrap = (
+            "CREATE TABLE schema_version (version INTEGER NOT NULL);\n"
+            "INSERT INTO schema_version (version) VALUES (0);\n"
+            if number == 1
+            else ""
+        )
+        conn.executescript(
+            f"BEGIN;\n{bootstrap}{sql}\nUPDATE schema_version SET version = {number};\nCOMMIT;\n"
+        )
+    return conn
+
+
+def test_rebuilding_media_keeps_every_row_and_reference(tmp_path: Path) -> None:
+    """Schema 5 rebuilds media (for the 'video' date source) while eight tables refer to it."""
+    path = tmp_path / "index.db"
+    old = schema(path, 4)
+    old.execute(
+        "INSERT INTO media (id, sha256, kind, bytes, taken_at, taken_at_source, shot, "
+        "clip_selfie) VALUES (1, 'abc', 'image', 10, '2026-07-14T09:00:00', 'exif', 'solo', 0.25)"
+    )
+    old.execute("INSERT INTO media (id, sha256, kind, bytes) VALUES (2, 'def', 'video', 99)")
+    old.execute(
+        "INSERT INTO faces (media_id, model_id, face_index, x, y, w, h, score, landmarks, "
+        "embedding) VALUES (1, 'm', 0, 0.1, 0.1, 0.2, 0.2, 0.9, '[]', x'00')"
+    )
+    old.execute("INSERT INTO media_groups (id, kind) VALUES (7, 'burst')")
+    old.execute("INSERT INTO group_members (group_id, media_id, is_keeper) VALUES (7, 1, 1)")
+    old.execute(
+        "INSERT INTO categories (media_id, label, score, is_primary) VALUES (1, 'scenery', 0.9, 1)"
+    )
+    old.close()
+
+    conn = open_index(path)
+    try:
+        assert schema_version(conn) == latest_version() >= 5
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        row = conn.execute(
+            "SELECT sha256, taken_at, taken_at_source, shot, clip_selfie FROM media WHERE id = 1"
+        ).fetchone()
+        assert tuple(row) == ("abc", "2026-07-14T09:00:00", "exif", "solo", 0.25)
+        assert conn.execute("SELECT COUNT(*) FROM faces WHERE media_id = 1").fetchone()[0] == 1
+        assert conn.execute("SELECT is_keeper FROM group_members").fetchone()[0] == 1
+        conn.execute(
+            "UPDATE media SET video_created = '2026-07-14T10:00:00', taken_at_source = 'video' "
+            "WHERE id = 2"
+        )
+        with pytest.raises(sqlite3.IntegrityError):  # references still hold
+            conn.execute(
+                "INSERT INTO faces (media_id, model_id, face_index, x, y, w, h, score, "
+                "landmarks, embedding) VALUES (9, 'm', 0, 0, 0, 1, 1, 1, '[]', x'00')"
+            )
+        with pytest.raises(sqlite3.IntegrityError):  # and so do the CHECK constraints
+            conn.execute("UPDATE media SET taken_at_source = 'guess' WHERE id = 2")
+        conn.execute("DELETE FROM media_groups WHERE id = 7")  # cascades as before
+        assert conn.execute("SELECT COUNT(*) FROM group_members").fetchone()[0] == 0
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        assert {"quality", "video_scans", "live_photos", "media_taken"} <= tables
+    finally:
+        conn.close()

@@ -46,6 +46,12 @@ _RANGES: dict[str, tuple[float, float]] = {
     "category_face_height": (0.0, 1.0),
     "burst_similarity": (-1.0, 1.0),
     "burst_window_seconds": (0.0, 3600.0),
+    "reject_max_sharpness": (0.0, 100_000.0),
+    "reject_max_luma": (0.0, 255.0),
+    "reject_min_dark_frac": (0.0, 1.0),
+    "reject_min_bright_frac": (0.0, 1.0),
+    "reject_max_detail": (0.0, 100_000.0),
+    "burst_tie_sharpness": (0.0, 1.0),
 }
 # Allowed values for each text setting.
 _CHOICES: dict[str, tuple[str, ...]] = {"cluster_method": CLUSTER_METHODS}
@@ -63,6 +69,12 @@ class Thresholds:
     category_face_height: float
     burst_similarity: float
     burst_window_seconds: float
+    reject_max_sharpness: float
+    reject_max_luma: float
+    reject_min_dark_frac: float
+    reject_min_bright_frac: float
+    reject_max_detail: float
+    burst_tie_sharpness: float
 
 
 @dataclass(frozen=True)

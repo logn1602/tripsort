@@ -31,6 +31,11 @@ FILE_FIELDS = {
     "category": (str, type(None)),
     "category_scores": (dict, type(None)),
     "burst": (int, type(None)),
+    "burst_best": (bool, type(None)),
+    "quality": (dict, type(None)),
+    "reject": (str, type(None)),
+    "motion_clip": (str, type(None)),
+    "motion_of": (str, type(None)),
     "paths": list,
     "occurrences": list,
 }
@@ -77,6 +82,12 @@ def test_schema(project: Project, trip: dict[str, Path]) -> None:
         "category_face_height": 0.03,
         "burst_similarity": 0.92,
         "burst_window_seconds": 10.0,
+        "reject_max_sharpness": 0.0,  # rejects are off in tests (conftest.py)
+        "reject_max_luma": 0.0,
+        "reject_min_dark_frac": 0.85,
+        "reject_min_bright_frac": 1.0,
+        "reject_max_detail": 100.0,
+        "burst_tie_sharpness": 0.85,
     }
     for entry in manifest["files"]:
         assert set(entry) == set(FILE_FIELDS)

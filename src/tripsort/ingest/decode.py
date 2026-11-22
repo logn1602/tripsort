@@ -11,6 +11,7 @@ the limit is not unreadable; it is passed through without a pHash, so it still t
 in exact dedupe and export but not in the near-copy check.
 """
 
+import contextlib
 import io
 import math
 import warnings
@@ -22,6 +23,7 @@ from PIL import Image, ImageOps
 
 from tripsort.clip.preprocess import clip_input
 from tripsort.clip.types import ClipPixels
+from tripsort.cull.quality import Quality, measure
 from tripsort.faces.types import FaceAnalyzer, FaceScan, RGBImage
 from tripsort.ingest.exif import NO_EXIF, ExifInfo, read_exif
 from tripsort.ingest.hashing import phash_hex
@@ -50,6 +52,7 @@ class ImageAnalysis:
     note: str | None = None
     faces: FaceScan | None = None  # None when no face analyzer was given
     clip: ClipPixels | None = None  # None unless the CLIP input was asked for
+    quality: Quality | None = None  # sharpness and exposure; None when not decoded
 
 
 def _ensure_plugins() -> None:
@@ -146,8 +149,11 @@ def _analyze(data: bytes, max_side: int, faces: FaceAnalyzer | None, clip: bool)
             phash = phash_hex(_prepare(image))
         except Exception as exc:  # keep the file, just without a pHash
             phash_note = f"no pHash: {_describe(exc)}"
+        quality: Quality | None = None
+        with contextlib.suppress(Exception):  # nor do missing scores stop anything
+            quality = measure(image)
         scan, pixels = _pixel_features(image, faces, clip)
-    return ImageAnalysis(fmt, width, height, exif, phash, True, phash_note, scan, pixels)
+    return ImageAnalysis(fmt, width, height, exif, phash, True, phash_note, scan, pixels, quality)
 
 
 def _prepare(image: Image.Image) -> Image.Image:

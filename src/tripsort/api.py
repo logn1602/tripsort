@@ -34,6 +34,7 @@ from tripsort.clip.categorize import CategoryStats
 from tripsort.clip.store import pending_clip_scans
 from tripsort.clip.types import CLIP_MODEL_ID, ImageEncoder, TextEncoder
 from tripsort.config import OTHER, Config, load_config
+from tripsort.cull.analysis import CullStats
 from tripsort.dedupe.copies import rebuild_copy_groups
 from tripsort.errors import ModelError, UserError, ZipError
 from tripsort.export.manifest import write_manifest
@@ -86,6 +87,7 @@ class AnalyzeResult:
     folder: Path | None = None  # the project folder
     categories: CategoryStats = field(default_factory=CategoryStats)
     bursts: BurstStats = field(default_factory=BurstStats)
+    culling: CullStats = field(default_factory=CullStats)
 
     def summary(self, project: str | None = None) -> str:
         """The summary. ``project`` is how its commands name the project folder, such as the
@@ -118,12 +120,12 @@ class AnalyzeResult:
                 f"{count(s.read_failures, 'zip entry', 'zip entries')} could not be read "
                 "(see the messages above and manifest.json)."
             )
-        lines.extend(_category_lines(self.categories, self.bursts))
+        lines.extend(_category_lines(self.categories, self.bursts, self.culling))
         lines.extend(_people_lines(self.people, project))
         return "\n".join(lines)
 
 
-def _category_lines(c: CategoryStats, b: BurstStats) -> list[str]:
+def _category_lines(c: CategoryStats, b: BurstStats, q: CullStats) -> list[str]:
     lines = []
     if c.problem:
         lines.append(f"Categories were not scored: {c.problem}")
@@ -141,8 +143,22 @@ def _category_lines(c: CategoryStats, b: BurstStats) -> list[str]:
         )
     if b.bursts:
         lines.append(
-            f"Found {count(b.bursts, 'burst')} ({count(b.photos, 'photo')}); every shot stays "
-            "in all/."
+            f"Found {count(b.bursts, 'burst')} ({count(b.photos, 'photo')}); the best shot of "
+            "each goes to the people, shot, and category folders, every shot stays in all/, "
+            "and bursts/ shows them side by side."
+        )
+    if rejected := sum(q.rejects.values()):
+        reasons = ", ".join(
+            f"{n:,} {reason.replace('_', ' ')}" for reason, n in q.rejects.items() if n
+        )
+        lines.append(
+            f"{count(rejected, 'photo')} flagged as rejects ({reasons}): they stay in all/ "
+            "and go to rejects/, not the people, shot, or category folders."
+        )
+    if q.not_scored:
+        lines.append(
+            f"{count(q.not_scored, 'photo')} without sharpness and exposure scores yet; "
+            "`tripsort ingest` on this project scores them."
         )
     return lines
 
@@ -275,6 +291,7 @@ class Project:
         loads only for prompts whose embeddings are neither shipped nor cached."""
         from tripsort.clip.bursts import analyze_bursts
         from tripsort.clip.categorize import analyze_categories
+        from tripsort.cull.analysis import analyze_culling
         from tripsort.faces.analysis import analyze_people  # pulls in scikit-learn
 
         with self._run("analyze") as run:
@@ -287,6 +304,7 @@ class Project:
                     categories = analyze_categories(self._conn, self.config, self.text_encoder)
                     people = analyze_people(self._conn, self.config.people)
                     bursts = analyze_bursts(self._conn, self.config.thresholds)
+                    culling = analyze_culling(self._conn, self.config)
             finally:
                 self._text = None  # the text encoder is only needed for new prompts
             set_meta(self._conn, "analysis_state", self._analysis_state())
@@ -301,6 +319,7 @@ class Project:
             self.folder,
             categories,
             bursts,
+            culling,
         )
 
     def text_encoder(self, progress: Progress | None = None) -> "TextEncoder":

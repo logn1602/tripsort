@@ -87,6 +87,7 @@ pythonpath = ["."]  # so tests can import tools/ and eval/
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 markers = [
     "models: needs downloaded model weights (skipped unless the models are cached)",
+    "cull: keeps the packaged reject thresholds (other tests turn rejects off)",
 ]
 
 [tool.coverage.run]

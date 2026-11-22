@@ -1,5 +1,6 @@
 import itertools
 import random
+from dataclasses import replace
 
 import pytest
 
@@ -13,15 +14,12 @@ from tripsort.dedupe.copies import (
     same_capture_time,
 )
 
-T = Thresholds(
+T = replace(  # the copy settings these tests are written for; the rest as packaged
+    load_config().thresholds,
     phash_max_distance=6,
     phash_max_distance_both_exif=2,
     phash_max_distance_both_exif_resized=4,
     copy_max_aspect_diff=0.02,
-    category_min_score=0.3,
-    category_face_height=0.03,
-    burst_similarity=0.92,
-    burst_window_seconds=10.0,
 )
 BASE = 0x0F0F_F0F0_3C3C_A5A5
 
@@ -67,7 +65,14 @@ def groups(cands: list[CopyCandidate], thresholds: Thresholds = T) -> dict[int, 
 
 
 def test_packaged_thresholds_match_the_tests() -> None:
-    assert load_config().thresholds == T
+    packaged = load_config().thresholds
+    for name in (
+        "phash_max_distance",
+        "phash_max_distance_both_exif",
+        "phash_max_distance_both_exif_resized",
+        "copy_max_aspect_diff",
+    ):
+        assert getattr(packaged, name) == getattr(T, name), name
 
 
 @pytest.mark.parametrize(("bits", "grouped"), [(0, True), (6, True), (7, False)])

@@ -421,7 +421,7 @@ def test_people_folders_hold_copies_where_hardlinks_fail(
     assert not link.samefile(project.folder / "all" / link.name)
     assert link.read_bytes() == (project.folder / "all" / link.name).read_bytes()
     assert result.link_fallbacks > 0
-    assert "people/, shots/, categories/, and duplicates/ hold copies" in result.summary()
+    assert "the folders besides all/ hold copies" in result.summary()
 
 
 def test_catch_up_reports_a_moved_zip_until_it_is_ingested_again(
