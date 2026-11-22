@@ -213,18 +213,21 @@ pass that finds faces, and keeps the result in the index.
   times count. Every shot stays in `all/`, `manifest.json` gives each photo's burst number,
   and a later release will pick the best shot of each burst.
 
-On the labeled trip used to tune the defaults (692 photos, most of them of people), the
-half used for tuning gave scenery 92% precision at 55% recall and food 100% precision at 80%
-recall, with one photo wrongly put in animals. A view with friends in it goes to
-`other` on purpose; check the folders before sharing them.
+The defaults were tuned on half of two labeled sets and then checked once on the other half.
+On a trip of 692 photos, most of them of people, the test half gave scenery 89% precision at
+50% recall and food 2 of 2, with 3 photos wrongly put in documents. On 108 photos of food,
+animals, documents, and other things, with no people, the test half got 44 of 51 right: food 16
+of 16, documents 8 of 9, other 13 of 15, and animals 6 of 9 (the rest went to `other`). A
+view with friends in it goes to `other` on purpose; check the folders before sharing them.
 
 ### CLIP models
 
 The image encoder (96.0 MB, int8) downloads the first time photos are read, from a release of
 this repository that holds model files only, and is used only when its SHA-256 matches.
-`TRIPSORT_CLIP_IMAGE=fp32` picks the full-precision encoder (351.5 MB), which scored the same
-on the labeled trip but is slower; a different encoder embeds every photo again on the next
-ingest. Without the model, tripsort still removes duplicates, sorts people, and exports,
+`TRIPSORT_CLIP_IMAGE=fp32` picks the full-precision encoder (351.5 MB), which gets the same
+labeled photos right but is slower: a run of 1,351 synthetic photos took 251 s and 761 MB at
+peak, against 198 s and 505 MB with int8. A different encoder embeds every photo again on the
+next ingest. Without the model, tripsort still removes duplicates, sorts people, and exports,
 exits with 2, and the next `tripsort ingest sorted/` embeds the photos it missed. CLIP's
 OpenAI weights are MIT licensed; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
