@@ -32,6 +32,7 @@ FILE_FIELDS = {
     "category_scores": (dict, type(None)),
     "burst": (int, type(None)),
     "burst_best": (bool, type(None)),
+    "burst_rank": (int, type(None)),
     "quality": (dict, type(None)),
     "reject": (str, type(None)),
     "motion_clip": (str, type(None)),

@@ -12,12 +12,14 @@ import numpy as np
 import pytest
 from factories import camera_exif, jpeg, make_zip
 from fake_clip import HUES, ColorImageEncoder, WordTextEncoder
+from fake_faces import MarkerFaceAnalyzer, face_photo
 from PIL import Image, ImageFilter
 
 from tripsort.api import Project
 from tripsort.config import load_config
-from tripsort.cull.analysis import _Scores, best_shot, reject_reason
+from tripsort.cull.analysis import _Scores, best_shot, rank_shots, reject_reason
 from tripsort.cull.quality import measure
+from tripsort.export.writer import _Burst, _own_best_shots
 
 # the fake CLIP puts a photo on its color's axis, and these prompts name the axes
 FAKE_CATEGORIES = """
@@ -98,6 +100,9 @@ def test_the_best_shot_of_a_burst() -> None:
     t = load_config().thresholds
     s = {1: scores(sharp_tiles=1000.0), 2: scores(sharp_tiles=950.0), 3: scores(sharp_tiles=400.0)}
     assert best_shot([1, 2, 3], s, {}, Counter(), t) == 1  # 1 and 2 tie on sharpness; 1 is sharper
+    assert rank_shots([1, 2, 3], s, {}, Counter(), t) == [1, 2, 3]  # the whole ranking
+    assert rank_shots([1, 2, 3], s, {1: "blurry"}, Counter(), t) == [2, 3, 1]
+    assert rank_shots([4, 1, 3], s, {}, Counter(), t) == [1, 3, 4]  # no scores: last, by time
     faces = Counter({2: 3, 1: 2})
     assert best_shot([1, 2, 3], s, {}, faces, t) == 2  # tied on sharpness, more faces
     assert best_shot([1, 2, 3], s, {1: "blurry", 2: "dark"}, faces, t) == 3  # rejects last
@@ -166,3 +171,62 @@ def test_rejects_and_bursts_get_review_folders(
         assert by_member["burst1.jpg"]["burst_best"] is False
         assert by_member["meal.jpg"]["burst_best"] is None
         assert by_member["meal.jpg"]["quality"]["sharp_tiles"] > 15
+
+
+def test_each_person_gets_their_own_best_shot_of_a_burst() -> None:
+    people = {1: ["alex"], 2: ["alex", "sam"], 3: ["kim", "sam"], 4: ["kim"]}
+    burst = _Burst(best=1, shots=[1, 2, 3, 4], ranked=[1, 3, 2, 4])
+    everything = {1, 2, 3, 4}
+    # alex is in the best shot; sam and kim are not, and 3 ranks first of their shots
+    assert _own_best_shots([burst], people, {}, everything) == {3: ["kim", "sam"]}
+    # a reject is never anyone's own best shot
+    assert _own_best_shots([burst], people, {3: "blurry"}, everything) == {2: ["sam"], 4: ["kim"]}
+    # every shot a reject: nobody gets one
+    assert _own_best_shots([burst], people, dict.fromkeys(everything, "dark"), everything) == {}
+    # before analyze ranks a burst: the first shot that shows each person, in time order
+    unranked = _Burst(best=None, shots=[1, 2], ranked=[1, 2])
+    assert _own_best_shots([unranked], people, {}, {1, 2}) == {1: ["alex"], 2: ["sam"]}
+
+
+def test_someone_the_best_shot_leaves_out_keeps_the_moment(
+    tmp_path: Path, color_clip: ColorImageEncoder, marker_faces: MarkerFaceAnalyzer
+) -> None:
+    def shot(person: int, x: float, when: str, seed: int, blur: float = 0.0) -> bytes:
+        image = face_photo([(person, x, 0.2, 0.25)], seed=seed)
+        if blur:
+            image = image.filter(ImageFilter.GaussianBlur(blur))
+        return jpeg(image, exif=camera_exif(f"2026:07:14 {when}"))
+
+    entries = []
+    for i in range(4):  # enough photos of persons 1 and 2 for both to be people
+        entries.append((f"alex{i}.jpg", shot(1, 0.3, f"1{i}:00:00", seed=10 + i)))
+        entries.append((f"sam{i}.jpg", shot(2, 0.3, f"1{i}:30:00", seed=20 + i)))
+    # a burst: sam in the sharpest shot, alex only in the two softer ones (sharpness is scored
+    # on a gray copy, where sam's yellow square stands out more than alex's orange one, so
+    # sam's shot is the sharp one; the other way round, blur would not be enough)
+    entries += [
+        ("burst1.jpg", shot(2, 0.3, "09:00:00", seed=5)),
+        ("burst2.jpg", shot(1, 0.5, "09:00:01", seed=5, blur=2)),
+        ("burst3.jpg", shot(1, 0.5, "09:00:02", seed=5, blur=4)),
+    ]
+    trip = make_zip(tmp_path / "trip.zip", entries)
+    with Project.open(tmp_path / "sorted") as project:
+        project.ingest([trip])
+        assert project.analyze().bursts.bursts == 1
+        result = project.export()
+        out = project.folder
+    folders = [names(p) for p in (out / "people").iterdir()]
+    alex = next(f for f in folders if "alex0.jpg" in f)
+    sam = next(f for f in folders if "sam0.jpg" in f)
+    assert sam == {"sam0.jpg", "sam1.jpg", "sam2.jpg", "sam3.jpg", "burst1.jpg"}  # the best shot
+    assert alex == {"alex0.jpg", "alex1.jpg", "alex2.jpg", "alex3.jpg", "burst2.jpg"}  # alex's
+    assert {"burst1.jpg"} == names(out / "shots" / "solo") & {"burst1.jpg", "burst2.jpg"}
+    (burst,) = (out / "bursts").iterdir()
+    assert names(burst) == {"burst1.jpg", "burst2.jpg", "burst3.jpg"}
+    assert len(list((out / "all").iterdir())) == 11
+    assert result.burst_people == 1
+    assert "people/ also holds 1 other shot of bursts" in result.summary()
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    ranks = {f["occurrences"][0]["member"]: f["burst_rank"] for f in manifest["files"]}
+    assert (ranks["burst1.jpg"], ranks["burst2.jpg"], ranks["burst3.jpg"]) == (1, 2, 3)
+    assert ranks["alex0.jpg"] is None

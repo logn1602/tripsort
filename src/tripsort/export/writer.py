@@ -130,6 +130,7 @@ class ExportResult:
     categories: dict[str, int] = field(default_factory=dict)  # category -> files
     rejects: dict[str, int] = field(default_factory=dict)  # reason -> files in rejects/
     bursts: int = 0  # folders in bursts/
+    burst_people: int = 0  # people/ links to a burst shot that is not its best
     manifest: Path | None = None
     peak_rss_bytes: int | None = None
 
@@ -160,10 +161,16 @@ class ExportResult:
                 "shots/, and categories/."
             )
         if self.bursts:
-            lines.append(
+            line = (
                 f"bursts/ shows {count(self.bursts, 'burst')} shot by shot; the best_ one is "
-                "the one in people/, shots/, and categories/."
+                "the one in people/, shots/, and categories/"
             )
+            if self.burst_people:
+                line += (
+                    f"; people/ also holds {count(self.burst_people, 'other shot')} of "
+                    "bursts, each the best shot of someone the best_ one leaves out"
+                )
+            lines.append(line + ".")
         if self.near_copies:
             where = (
                 "duplicates/ shows each one next to the file that was kept"
@@ -250,8 +257,9 @@ def export_files(
     rejects = _load_rejects(conn)
     bursts = _load_bursts(conn)
     hidden = set(rejects) | set(live)  # left out of people/, shots/, and categories/
-    for best, shots_in_burst in bursts:
-        hidden.update(s for s in shots_in_burst if s != best)
+    for burst in bursts:
+        hidden.update(s for s in burst.shots if s != burst.best)
+    own_best = _own_best_shots(bursts, people, rejects, set(all_relpath))
     for m in by_date:
         rel = all_relpath.get(m.id)
         if rel is None:
@@ -259,7 +267,9 @@ def export_files(
         name = PurePosixPath(rel).name
         if (reason := rejects.get(m.id)) is not None:
             planner.want(_Wanted(m, "reject", f"{REJECTS_DIR}/{reason}", name, rel))
-        if m.id in hidden:
+        if m.id in hidden:  # a burst shot may still be someone's own best shot of it
+            for person in own_best.get(m.id, ()):
+                planner.want(_Wanted(m, "person", f"{PEOPLE_DIR}/{person}", name, rel))
             continue
         for person in people.get(m.id, ()):
             planner.want(_Wanted(m, "person", f"{PEOPLE_DIR}/{person}", name, rel))
@@ -268,15 +278,15 @@ def export_files(
         if (category := categories.get(m.id)) is not None:
             planner.want(_Wanted(m, "category", f"{CATEGORIES_DIR}/{category}", name, rel))
     burst_folders = 0
-    for best, shots_in_burst in bursts:
-        rels = [(s, all_relpath[s]) for s in shots_in_burst if s in all_relpath]
+    for burst in bursts:
+        rels = [(s, all_relpath[s]) for s in burst.shots if s in all_relpath]
         if len(rels) < 2:
             continue
         burst_folders += 1
         folder = f"{BURSTS_DIR}/{split_extension(PurePosixPath(rels[0][1]).name)[0]}"
         for burst_shot, rel in rels:
             name = PurePosixPath(rel).name
-            name = f"best_{name}" if burst_shot == best else name
+            name = f"best_{name}" if burst_shot == burst.best else name
             planner.want(_Wanted(media[burst_shot], "burst", folder, name, rel))
 
     wanted = planner.wanted
@@ -313,6 +323,7 @@ def export_files(
             sorted(Counter(w.folder.split("/", 1)[1] for w in wanted if w.role == "reject").items())
         ),
         bursts=burst_folders,
+        burst_people=sum(len(folders) for folders in own_best.values()),
     )
     if dry_run:
         result.seconds = time.perf_counter() - started
@@ -735,21 +746,64 @@ def _load_rejects(conn: sqlite3.Connection) -> dict[int, str]:
     }
 
 
-def _load_bursts(conn: sqlite3.Connection) -> list[tuple[int | None, list[int]]]:
-    """Each burst's best shot (None before one is picked) and its shots in time order."""
-    shots: defaultdict[int, list[tuple[str, int, int]]] = defaultdict(list)
-    for group_id, media_id, is_keeper, taken_at in conn.execute(
-        "SELECT gm.group_id, gm.media_id, gm.is_keeper, m.taken_at FROM group_members gm "
-        "JOIN media_groups g ON g.id = gm.group_id JOIN media m ON m.id = gm.media_id "
-        "WHERE g.kind = 'burst'"
+@dataclass(frozen=True)
+class _Burst:
+    best: int | None  # None before analyze picks one
+    shots: list[int]  # in time order
+    ranked: list[int]  # best first (in time order before analyze ranks them)
+
+
+def _load_bursts(conn: sqlite3.Connection) -> list[_Burst]:
+    """Every burst, with its best shot and its shots in time order and in rank order."""
+    shots: defaultdict[int, list[tuple[str, int, int, int | None]]] = defaultdict(list)
+    for group_id, media_id, is_keeper, rank, taken_at in conn.execute(
+        "SELECT gm.group_id, gm.media_id, gm.is_keeper, gm.shot_rank, m.taken_at "
+        "FROM group_members gm JOIN media_groups g ON g.id = gm.group_id "
+        "JOIN media m ON m.id = gm.media_id WHERE g.kind = 'burst'"
     ):
-        shots[int(group_id)].append((str(taken_at or ""), int(media_id), int(is_keeper)))
+        shots[int(group_id)].append(
+            (
+                str(taken_at or ""),
+                int(media_id),
+                int(is_keeper),
+                None if rank is None else int(rank),
+            )
+        )
     bursts = []
     for group_id in sorted(shots):
-        ordered = sorted(shots[group_id])
-        keeper = next((media_id for _, media_id, is_keeper in ordered if is_keeper), None)
-        bursts.append((keeper, [media_id for _, media_id, _ in ordered]))
+        ordered = sorted(shots[group_id], key=lambda shot: shot[:2])
+        ranked = sorted(ordered, key=lambda shot: (shot[3] is None, shot[3] or 0))
+        bursts.append(
+            _Burst(
+                best=next((shot[1] for shot in ordered if shot[2]), None),
+                shots=[shot[1] for shot in ordered],
+                ranked=[shot[1] for shot in ranked],
+            )
+        )
     return bursts
+
+
+def _own_best_shots(
+    bursts: list[_Burst],
+    people: dict[int, list[str]],
+    rejects: dict[int, str],
+    exported: set[int],
+) -> dict[int, list[str]]:
+    """Burst shot -> the people/ folders it goes in although it is not its burst's best
+    shot: everyone the best shot leaves out gets their own best shot of the burst, the
+    first in the burst's ranking that shows them and is no reject."""
+    found: defaultdict[int, list[str]] = defaultdict(list)
+    for burst in bursts:
+        best = burst.best
+        covered = set(people.get(best, ())) if best is not None and best not in rejects else set()
+        for shot in burst.ranked:
+            if shot == best or shot in rejects or shot not in exported:
+                continue
+            for person in people.get(shot, ()):
+                if person not in covered:
+                    covered.add(person)
+                    found[shot].append(person)
+    return dict(found)
 
 
 def _load_live_photos(conn: sqlite3.Connection) -> dict[int, int]:

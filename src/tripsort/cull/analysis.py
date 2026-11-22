@@ -12,7 +12,10 @@ category folders and links them into rejects/<reason>/.
 Each burst's best shot is the first by: not a reject; sharpness, where shots at least
 ``burst_tie_sharpness`` of the sharpest one's count as tied; fewer clipped pixels; more
 counted faces (someone turned away or out of frame shows fewer); sharper; earlier. The
-other shots stay in all/ and leave the people, shot, and category folders.
+whole ranking is stored (``shot_rank``, 1 for the best shot). The other shots stay in
+all/ and leave the shot and category folders; export puts the best shot in the people
+folders of everyone it shows, and gives anyone it leaves out their own best shot of the
+burst: the first in the ranking that shows them and is no reject.
 """
 
 import sqlite3
@@ -100,22 +103,26 @@ def analyze_culling(conn: sqlite3.Connection, config: Config) -> CullStats:
         "WHERE g.kind = 'burst'"
     ):
         members[int(group_id)].append((str(taken_at or ""), int(media_id)))
-    keepers = {
-        group_id: best_shot(
+    ranked = {
+        group_id: rank_shots(
             [media_id for _, media_id in sorted(shots)], scores, rejects, faces, thresholds
         )
         for group_id, shots in members.items()
     }
     conn.executemany(
-        "UPDATE group_members SET is_keeper = (media_id = ?) WHERE group_id = ?",
-        [(keeper, group_id) for group_id, keeper in keepers.items()],
+        "UPDATE group_members SET is_keeper = ?, shot_rank = ? WHERE group_id = ? AND media_id = ?",
+        [
+            (int(position == 0), position + 1, group_id, media_id)
+            for group_id, order in ranked.items()
+            for position, media_id in enumerate(order)
+        ],
     )
     counts = Counter(rejects.values())
     return CullStats(
         rejects={reason: counts[reason] for reason in REASONS},
         scored=len(scores),
         not_scored=len(kept) - len(scores),
-        bursts=len(keepers),
+        bursts=len(ranked),
     )
 
 
@@ -126,11 +133,22 @@ def best_shot(
     faces: Counter[int],
     thresholds: Thresholds,
 ) -> int:
-    """The best of a burst's shots (media ids in time order); a shot without scores ranks
-    after every shot with them, then by time."""
+    """The best of a burst's shots (media ids in time order)."""
+    return rank_shots(shots, scores, rejects, faces, thresholds)[0]
+
+
+def rank_shots(
+    shots: list[int],
+    scores: dict[int, _Scores],
+    rejects: dict[int, str],
+    faces: Counter[int],
+    thresholds: Thresholds,
+) -> list[int]:
+    """A burst's shots (media ids in time order), best first; shots without scores come
+    after every shot with them, in time order."""
     scored = [s for s in shots if s in scores]
     if not scored:
-        return shots[0]
+        return list(shots)
     sharpest = max(scores[s].sharp_tiles for s in scored)
     tie = thresholds.burst_tie_sharpness * sharpest
 
@@ -147,4 +165,5 @@ def best_shot(
             position,
         )
 
-    return shots[min((shots.index(s) for s in scored), key=rank)]
+    order = sorted((shots.index(s) for s in scored), key=rank)
+    return [shots[position] for position in order] + [s for s in shots if s not in scores]

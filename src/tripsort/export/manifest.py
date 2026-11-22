@@ -91,14 +91,18 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
             primary[int(media_id)] = str(label)
     burst_of: dict[int, int] = {}
     best_of: dict[int, bool] = {}  # burst shots: whether it is the burst's best
+    rank_of: dict[int, int] = {}  # burst shots: their place in the burst, 1 the best
     for number, (group_id,) in enumerate(
         conn.execute("SELECT id FROM media_groups WHERE kind = 'burst' ORDER BY id").fetchall(), 1
     ):
-        for media_id, is_keeper in conn.execute(
-            "SELECT media_id, is_keeper FROM group_members WHERE group_id = ?", (group_id,)
+        for media_id, is_keeper, rank in conn.execute(
+            "SELECT media_id, is_keeper, shot_rank FROM group_members WHERE group_id = ?",
+            (group_id,),
         ):
             burst_of[int(media_id)] = number
             best_of[int(media_id)] = bool(is_keeper)
+            if rank is not None:
+                rank_of[int(media_id)] = int(rank)
     quality: dict[int, dict[str, float]] = {}
     reject: dict[int, str] = {}
     for media_id, sharpness, sharp_tiles, luma, dark, bright, reason in conn.execute(
@@ -168,6 +172,7 @@ def build_manifest(conn: sqlite3.Connection, config: Config, stats: ProjectStats
                 "category_scores": scores.get(media_id),
                 "burst": burst_of.get(media_id),
                 "burst_best": best_of.get(media_id),
+                "burst_rank": rank_of.get(media_id),
                 "quality": quality.get(media_id),
                 "reject": reject.get(media_id),
                 "motion_clip": motion_clip.get(media_id),
