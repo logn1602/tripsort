@@ -13,7 +13,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from tripsort.ingest.zip_reader import IMAGE_EXTENSIONS
+from tripsort.ingest.zip_reader import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 
 EVAL_DIR_ENV = "TRIPSORT_EVAL_DIR"
 
@@ -52,6 +52,16 @@ def photo_files(folder: Path) -> list[Path]:
     )
 
 
+def media_files(folder: Path) -> list[Path]:
+    """Photos and videos: what the eval zips hold (videos for the video labels and the
+    memory check; the photo evaluations ignore them)."""
+    kinds = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
+    return sorted(
+        (p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in kinds),
+        key=lambda p: p.relative_to(folder).as_posix(),
+    )
+
+
 def build_sources(root: Path, out: Path) -> list[Source]:
     """Zip each subfolder of ``root`` into ``out`` (stored, not compressed), reusing zips
     built earlier so their fingerprints, and the index, stay valid."""
@@ -72,7 +82,7 @@ def build_sources(root: Path, out: Path) -> list[Source]:
         if not zip_path.exists():
             tmp = zip_path.with_suffix(".tmp")
             with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_STORED) as zf:
-                for path in photo_files(folder):
+                for path in media_files(folder):
                     zf.write(path, path.relative_to(folder).as_posix())
             tmp.replace(zip_path)
         sources.append(Source(label, folder, zip_path))

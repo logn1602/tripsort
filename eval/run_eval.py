@@ -8,6 +8,10 @@
                                    [--set people.KEY=VALUE ...] [--name NAME] [--write-baseline]
     uv run eval/run_eval.py categories [--work DIR] [--split dev|test] [--config FILE]
                                        [--mistakes] [--name NAME] [--write-baseline]
+    uv run eval/run_eval.py prelabel --videos [--refs REFS] [--work DIR]
+    uv run eval/run_eval.py videos [--refs REFS] [--work DIR] [--split dev|test]
+    uv run eval/run_eval.py cull-prelabel [--work DIR] [--review]
+    uv run eval/run_eval.py cull [--work DIR] [--review] [--name NAME] [--write-baseline]
 
 Each takes --labeled-set DIR for a set other than TRIPSORT_EVAL_DIR (such as a category-only
 set), --config FILE (a tripsort.toml to use, such as a prompt set), and --set TABLE.KEY=VALUE.
@@ -23,6 +27,15 @@ eval/ref_copies.py).
 ``categories`` scores the primary category of the checked rows (precision, recall, and F1
 per category, the confusion matrix) and the selfie hint; with ``--mistakes`` it writes
 category_mistakes.html, the dev rows it got wrong, into the labeled set's folder.
+``prelabel --videos`` writes video_labels.csv and video_labels.html for the videos (Live
+Photo motion clips aside), split by SHA-256 like the photos; ``videos`` scores their
+people and categories.
+``cull-prelabel`` writes cull_labels.csv and cull.html (see eval/cull_eval.py): the
+lowest-scoring quarter of the dev photos plus a random 50 of the rest, to label as fine,
+blurry, too dark, or blown out, and the dev bursts, to pick the shot to keep; ``cull``
+scores the rejects and the burst picks against it. With ``--review`` both work on a fresh
+trip with no labels.csv: every flagged photo, a random 50 of the rest, and up to 40
+bursts.
 
 Only numbers are printed and saved: no file names, no image data, and people appear as p1,
 p2, ... ``--write-baseline`` stores the numbers in eval/baseline.json.
@@ -32,6 +45,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import time
@@ -52,6 +66,19 @@ import itertools
 
 import numpy as np
 from category_metrics import category_report
+from cull_eval import (
+    BURST_SEPARATOR,
+    CULL_CSV,
+    CULL_HTML,
+    CullRow,
+    ScoredPhoto,
+    cull_report,
+    pick_photos,
+    pick_review,
+    read_cull_rows,
+    write_cull_rows,
+)
+from cull_page import BurstCard, PhotoCard, write_cull_page
 from datasets import Source, build_sources, eval_dir, file_key  # the sibling modules
 from labels import CATEGORIES, Row, person_key, read_rows, split_for, write_rows
 from labels_page import THUMB_SIDE, Box, Card, thumb_uri, write_page
@@ -83,6 +110,7 @@ from ref_copies import ref_copies
 from tripsort import __version__
 from tripsort.api import Project
 from tripsort.clip.types import CLIP_MODEL_ID
+from tripsort.config import OTHER as OTHER_CATEGORY
 from tripsort.faces.names import display_name
 from tripsort.faces.people import RefsResult
 from tripsort.faces.suggest import Suggestion
@@ -919,6 +947,408 @@ def _write_mistakes(
 PUBLIC_SAMPLE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "categories"
 
 
+def _dev_photos(
+    rows: list[Row], files: dict[str, int], kept: dict[int, Prediction]
+) -> dict[int, str]:
+    """media id -> labels.csv file, for the dev rows whose photo is kept."""
+    return {
+        media_id: row.file
+        for row in rows
+        if row.split == "dev" and (media_id := files.get(row.file)) is not None and media_id in kept
+    }
+
+
+def _bursts(conn: Any, dev: dict[int, str]) -> list[tuple[str, str | None]]:
+    """(burst key, the kept shot's file) for each burst whose shots are all dev rows."""
+    shots: defaultdict[int, list[tuple[str, int, int]]] = defaultdict(list)
+    for group_id, media_id, is_keeper, taken_at in conn.execute(
+        "SELECT gm.group_id, gm.media_id, gm.is_keeper, m.taken_at FROM group_members gm "
+        "JOIN media_groups g ON g.id = gm.group_id JOIN media m ON m.id = gm.media_id "
+        "WHERE g.kind = 'burst'"
+    ):
+        shots[int(group_id)].append((str(taken_at or ""), int(media_id), int(is_keeper)))
+    found = []
+    for members in shots.values():
+        if all(media_id in dev for _, media_id, _ in members):
+            ordered = sorted(members)
+            key = BURST_SEPARATOR.join(dev[media_id] for _, media_id, _ in ordered)
+            keeper = next((dev[m] for _, m, is_keeper in ordered if is_keeper), None)
+            found.append((key, keeper))
+    return sorted(found)
+
+
+VIDEO_LABELS_CSV = "video_labels.csv"
+VIDEO_LABELS_HTML = "video_labels.html"
+STRIP_HEIGHT = 240  # each frame of a video's strip on video_labels.html, in pixels
+
+
+@dataclass
+class VideoGuess:
+    media_id: int
+    sha256: str
+    people: list[str] = field(default_factory=list)  # matched in enough frames
+    category: str | None = None
+    times: list[float] = field(default_factory=list)  # the sampled frames, in seconds
+
+
+def video_predictions(
+    project: Project, sources: list[Source]
+) -> tuple[dict[str, int], dict[int, VideoGuess]]:
+    """(video_labels.csv file -> media id for every video occurrence, media id -> guess for
+    every sampled video that is not a Live Photo's motion clip)."""
+    conn = project.connection
+    by_label = {s.label: s for s in sources}
+    files = {
+        file_key(by_label[str(label)], str(member)): int(media_id)
+        for media_id, label, member in conn.execute(
+            "SELECT o.media_id, s.label, o.member_path FROM occurrences o "
+            "JOIN sources s ON s.id = o.source_id JOIN media m ON m.id = o.media_id "
+            "WHERE m.kind = 'video'"
+        )
+        if str(label) in by_label
+    }
+    guesses = {
+        int(media_id): VideoGuess(int(media_id), str(sha))
+        for media_id, sha in conn.execute(
+            "SELECT m.id, m.sha256 FROM media m WHERE m.kind = 'video' AND m.status = 'ok' "
+            "AND m.id IN (SELECT media_id FROM occurrences) "
+            "AND m.id NOT IN (SELECT motion_id FROM live_photos) "
+            "AND EXISTS (SELECT 1 FROM video_scans s WHERE s.media_id = m.id AND s.status = 'ok')"
+        )
+    }
+    for media_id, number, name in conn.execute(
+        "SELECT DISTINCT f.media_id, p.number, p.name FROM faces f "
+        "JOIN people p ON p.id = f.person_id WHERE f.frame_ts >= 0 AND f.match IS NOT NULL"
+    ):
+        if (guess := guesses.get(int(media_id))) is not None:
+            guess.people.append(display_name(int(number), name))
+    for media_id, label in conn.execute(
+        "SELECT media_id, label FROM categories WHERE is_primary = 1"
+    ):
+        if (guess := guesses.get(int(media_id))) is not None:
+            guess.category = str(label)
+    for media_id, at in conn.execute(
+        "SELECT media_id, frame_ts FROM clip_embeddings WHERE frame_ts >= 0 AND model_id = ? "
+        "ORDER BY media_id, frame_ts",
+        (CLIP_MODEL_ID,),
+    ):
+        if (guess := guesses.get(int(media_id))) is not None:
+            guess.times.append(float(at))
+    return files, guesses
+
+
+def _video_strip(project: Project, guess: VideoGuess) -> tuple[str | None, list[Box]]:
+    """A strip of the video's first, middle, and last sampled frames, with their faces."""
+    from tripsort.video.sample import frames
+
+    if not guess.times:
+        return None, []
+    times = sorted({guess.times[0], guess.times[len(guess.times) // 2], guess.times[-1]})
+    conn = project.connection
+    faces: defaultdict[float, list[tuple[float, float, float, float, str]]] = defaultdict(list)
+    for at, x, y, w, h, number, name in conn.execute(
+        "SELECT f.frame_ts, f.x, f.y, f.w, f.h, p.number, p.name FROM faces f "
+        "LEFT JOIN people p ON p.id = f.person_id AND f.match IS NOT NULL "
+        "WHERE f.media_id = ? AND f.frame_ts >= 0 AND f.model_id = ? AND f.score >= ?",
+        (guess.media_id, FACE_MODEL_ID, project.config.people.min_face_score),
+    ):
+        label = display_name(int(number), name) if number is not None else "?"
+        faces[round(float(at), 3)].append((float(x), float(y), float(w), float(h), label))
+    with ZipCache(conn) as zips:
+        found = zips.find(guess.media_id)
+        if found is None:
+            return None, []
+        source, member = found
+        handle, name = tempfile.mkstemp(prefix="tripsort-eval-video-")
+        try:
+            with os.fdopen(handle, "wb") as out, source.open(member) as stream:
+                while chunk := stream.read(1 << 20):
+                    out.write(chunk)
+            panels = []
+            for at, pixels in frames(Path(name), times):
+                image = Image.fromarray(pixels)
+                width = max(1, round(image.width * STRIP_HEIGHT / image.height))
+                panels.append((at, image.resize((width, STRIP_HEIGHT))))
+        except Exception:  # a video PyAV cannot read gets no strip
+            return None, []
+        finally:
+            Path(name).unlink(missing_ok=True)
+    if not panels:
+        return None, []
+    total = sum(image.width for _, image in panels)
+    strip = Image.new("RGB", (total, STRIP_HEIGHT))
+    boxes, left = [], 0
+    for at, image in panels:
+        strip.paste(image, (left, 0))
+        share = image.width / total
+        for x, y, w, h, label in faces.get(round(at, 3), []):
+            boxes.append(Box(left / total + x * share, y, w * share, h, label, True))
+        left += image.width
+    return thumb_uri(strip), boxes
+
+
+def video_prelabel(
+    root: Path, work: Path, refs: Path | None, overrides: dict[str, str]
+) -> dict[str, Any]:
+    """video_labels.csv (unless it exists) and video_labels.html: one row per sampled video
+    (Live Photo motion clips are not videos here), split by SHA-256 like the photos, starting
+    from tripsort's guesses of its people and category."""
+    project, sources, named = people_project(root, work, refs, overrides)
+    with project:
+        files, guesses = video_predictions(project, sources)
+        first_key: dict[int, str] = {}
+        for key in sorted(files):
+            first_key.setdefault(files[key], key)
+        csv_path = root / VIDEO_LABELS_CSV
+        if csv_path.exists():
+            rows, problems = read_rows(csv_path)
+            state = "kept as it was"
+        else:
+            ordered = sorted((first_key[m], g) for m, g in guesses.items() if m in first_key)
+            rows = [
+                Row(
+                    row=number,
+                    file=key,
+                    split=split_for(guess.sha256),
+                    checked=False,
+                    people=sorted(guess.people),
+                    shot="none",
+                    selfie=False,
+                    category=guess.category or OTHER_CATEGORY,
+                )
+                for number, (key, guess) in enumerate(ordered, start=1)
+            ]
+            problems = []
+            write_rows(csv_path, rows)
+            state = "written"
+        csv_sha256 = hashlib.sha256(csv_path.read_bytes()).hexdigest()
+        cards = []
+        for row in rows:
+            card = Card(
+                row=row.row,
+                file=row.file,
+                split=row.split,
+                checked=row.checked,
+                people=list(row.people),
+                shot=row.shot,
+                selfie=row.selfie,
+                category=row.category,
+            )
+            media_id = files.get(row.file)
+            if media_id is not None and (guess := guesses.get(media_id)) is not None:
+                card.thumb, card.boxes = _video_strip(project, guess)
+            cards.append(card)
+        write_page(
+            root / VIDEO_LABELS_HTML,
+            cards,
+            _button_names(named, rows),
+            csv_sha256=csv_sha256,
+            can_save=not problems,
+            csv_name=VIDEO_LABELS_CSV,
+        )
+    return {
+        "videos": len(rows),
+        "dev": sum(r.split == "dev" for r in rows),
+        "test": sum(r.split == "test" for r in rows),
+        "checked": sum(r.checked for r in rows),
+        "label_problems": len(problems),
+        "videos_without_strip": sum(1 for c in cards if c.thumb is None),
+        "videos_with_people": sum(bool(g.people) for g in guesses.values()),
+        "video_labels_csv": state,
+        "video_labels_html": "written",
+        **_refs_report(project, refs, named),
+    }
+
+
+def evaluate_videos(
+    root: Path, work: Path, refs: Path | None, split: str, overrides: dict[str, str]
+) -> dict[str, Any]:
+    """People and categories of the checked videos of ``split`` against video_labels.csv."""
+    rows, problems = read_rows(root / VIDEO_LABELS_CSV)
+    if problems:
+        return {"label_problems": len(problems), "first_problems": problems[:20]}
+    project, sources, named = people_project(root, work, refs, overrides)
+    with project:
+        files, guesses = video_predictions(project, sources)
+        refs_report = _refs_report(project, refs, named)
+    checked = [r for r in rows if r.checked]
+    everyone: Counter[str] = Counter(person_key(n) for r in checked for n in r.people)
+    if named is not None:
+        for name in named.names:
+            everyone.setdefault(person_key(name), 0)
+    photos, pairs, not_found = [], [], 0
+    for row in checked:
+        if row.split != split:
+            continue
+        guess = guesses.get(files.get(row.file, -1))
+        if guess is None:
+            not_found += 1
+            continue
+        photos.append(
+            Photo(
+                labeled={person_key(n) for n in row.people},
+                predicted={person_key(n) for n in guess.people},
+                shot="none",
+                predicted_shot="none",
+                selfie=False,
+                predicted_selfie=False,
+                category=row.category,
+            )
+        )
+        pairs.append((row.category, guess.category or OTHER_CATEGORY))
+    people = people_report(photos, everyone)
+    return {
+        "tripsort_version": __version__,
+        "split": split,
+        "checked_rows": sum(r.split == split for r in checked),
+        "rows_not_found": not_found,
+        "people": {key: people[key] for key in ("micro", "macro", "per_person") if key in people},
+        "categories": category_report(pairs, list(CATEGORIES)),
+        **refs_report,
+    }
+
+
+def _scope(
+    root: Path, review: bool, files: dict[str, int], kept: dict[int, Prediction]
+) -> tuple[dict[int, str], dict[str, Any] | None]:
+    """(media id -> file for the photos culling looks at: the dev rows of labels.csv, or
+    for a review of a fresh trip, every kept photo; the label problems when labels.csv
+    cannot be read, else None)."""
+    if review:
+        scope: dict[int, str] = {}
+        for key in sorted(files):
+            if files[key] in kept:
+                scope.setdefault(files[key], key)
+        return scope, None
+    rows, problems = read_rows(root / LABELS_CSV)
+    if problems:
+        return {}, {"label_problems": len(problems), "first_problems": problems[:20]}
+    return _dev_photos(rows, files, kept), None
+
+
+def cull_prelabel(
+    root: Path, work: Path, overrides: dict[str, str], *, review: bool = False
+) -> dict[str, Any]:
+    """cull_labels.csv (unless it exists) and cull.html in the labeled set's folder: the
+    dev photos to label for sharpness and exposure, and the dev bursts. ``review``, for a
+    fresh trip with no labels.csv: every flagged photo plus a sample of the rest, and a
+    sample of the bursts."""
+    project, sources, _ = people_project(root, work, None, overrides)
+    with project:
+        conn = project.connection
+        files, kept = predictions(project, sources)
+        dev, problems = _scope(root, review, files, kept)
+        if problems is not None:
+            return problems
+        csv_path = root / CULL_CSV
+        if csv_path.exists():
+            cull_rows, state = read_cull_rows(csv_path), "kept as it was"
+        elif review:
+            flagged_ids = {
+                int(m)
+                for (m,) in conn.execute("SELECT media_id FROM quality WHERE reject IS NOT NULL")
+            }
+            flagged = sorted(dev[m] for m in dev if m in flagged_ids)
+            others = sorted(dev[m] for m in dev if m not in flagged_ids)
+            chosen, burst_keys = pick_review(flagged, others, [k for k, _ in _bursts(conn, dev)])
+            cull_rows = [
+                CullRow("photo", key, "review", sample, round(weight, 3), "")
+                for key, sample, weight in chosen
+            ] + [CullRow("burst", key, "review", "", 1.0, "") for key in burst_keys]
+            write_cull_rows(csv_path, cull_rows)
+            state = "written"
+        else:
+            scores = {
+                int(media_id): (float(a), float(b), float(c), float(d))
+                for media_id, a, b, c, d in conn.execute(
+                    "SELECT media_id, sharpness, sharp_tiles, luma_mean, bright_frac FROM quality"
+                )
+            }
+            photos = [ScoredPhoto(key, *scores[m]) for m, key in dev.items() if m in scores]
+            cull_rows = [
+                CullRow("photo", p.key, "dev", sample, round(weight, 3), "")
+                for p, sample, weight in pick_photos(photos)
+            ] + [CullRow("burst", key, "dev", "", 1.0, "") for key, _ in _bursts(conn, dev)]
+            write_cull_rows(csv_path, cull_rows)
+            state = "written"
+        media_of = {key: m for m, key in dev.items()}
+        thumbs: dict[str, str | None] = {}
+        with ZipCache(conn) as zips:
+            for key in {k for r in cull_rows for k in r.key.split(BURST_SEPARATOR)}:
+                thumbs[key] = None
+                media_id = media_of.get(key)
+                data = zips.read(media_id, kept[media_id].sha256) if media_id else None
+                if data is not None:
+                    with contextlib.suppress(UnreadableImageError):
+                        pixels = decode_oriented(data, max_side=THUMB_SIDE * 2)
+                        thumbs[key] = thumb_uri(Image.fromarray(pixels))
+        photo_cards = [
+            PhotoCard(r.key, r.sample, r.weight, r.label, thumbs.get(r.key))
+            for r in cull_rows
+            if r.kind == "photo"
+        ]
+        burst_cards = [
+            BurstCard(keys, r.label, [thumbs.get(k) for k in keys])
+            for r in cull_rows
+            if r.kind == "burst" and (keys := r.key.split(BURST_SEPARATOR))
+        ]
+        write_cull_page(root / CULL_HTML, photo_cards, burst_cards, "review" if review else "dev")
+    return {
+        "dev_photos": len(dev),
+        "photos": len(photo_cards),
+        "tail": sum(1 for c in photo_cards if c.sample == "tail"),
+        "flagged": sum(1 for c in photo_cards if c.sample == "flagged"),
+        "rest_sample": sum(1 for c in photo_cards if c.sample == "rest"),
+        "rest_weight": max((c.weight for c in photo_cards if c.sample == "rest"), default=0),
+        "bursts": len(burst_cards),
+        "photos_without_thumbnail": sum(1 for c in photo_cards if c.thumb is None),
+        "cull_labels_csv": state,
+        "cull_html": "written",
+    }
+
+
+def evaluate_cull(
+    root: Path, work: Path, overrides: dict[str, str], *, review: bool = False
+) -> dict[str, Any]:
+    """Rejects and burst picks against cull_labels.csv: on the dev half, or with
+    ``review`` on a fresh trip's labeled sample."""
+    cull_rows = read_cull_rows(root / CULL_CSV)
+    project, sources, _ = people_project(root, work, None, overrides)
+    with project:
+        conn = project.connection
+        files, kept = predictions(project, sources)
+        dev, problems = _scope(root, review, files, kept)
+        if problems is not None:
+            return problems
+        reasons = {
+            dev[int(media_id)]: str(reason)
+            for media_id, reason in conn.execute(
+                "SELECT media_id, reject FROM quality WHERE reject IS NOT NULL"
+            )
+            if int(media_id) in dev
+        }
+        keepers = {key: keeper for key, keeper in _bursts(conn, dev) if keeper is not None}
+        thresholds = project.config.thresholds
+    report = cull_report(cull_rows, reasons, keepers)
+    return {
+        "tripsort_version": __version__,
+        "settings": {
+            name: getattr(thresholds, name)
+            for name in (
+                "reject_max_sharpness",
+                "reject_max_luma",
+                "reject_min_dark_frac",
+                "reject_min_bright_frac",
+                "reject_max_detail",
+                "burst_tie_sharpness",
+            )
+        },
+        "dev_photos": len(dev),
+        "dev_rejects": dict(Counter(reasons.values())),
+        **report,
+    }
+
+
 def evaluate_public(sample: Path, work: Path) -> dict[str, Any]:
     """The categories of a public sample (one folder per category of public-domain or CC0
     photos, such as tests/fixtures/categories), through the whole pipeline with the real
@@ -1020,6 +1450,26 @@ def main(argv: list[str] | None = None) -> int:
     dedupe.add_argument("--work", type=Path, help="project folder to use (default: a temp folder)")
     dedupe.add_argument("--name", default="generated", help="baseline key (default: generated)")
     dedupe.add_argument("--write-baseline", action="store_true", help="save to eval/baseline.json")
+    for name, text in (
+        ("cull-prelabel", f"write {CULL_CSV} and {CULL_HTML} for the dev half's culling labels"),
+        ("cull", f"rejects and burst picks against {CULL_CSV}"),
+    ):
+        c = sub.add_parser(name, help=text)
+        c.add_argument("--work", type=Path, help="keep zips and index here between runs")
+        c.add_argument("--labeled-set", type=Path, help="default: the TRIPSORT_EVAL_DIR folder")
+        c.add_argument("--set", action="append", default=[], metavar="TABLE.KEY=VALUE")
+        c.add_argument(
+            "--review",
+            action="store_true",
+            help="a fresh trip with no labels.csv: flagged photos, a sample of the rest, bursts",
+        )
+        if name == "cull":
+            c.add_argument(
+                "--name",
+                default=None,
+                help="baseline key (private_cull_dev, or private_cull_review with --review)",
+            )
+            c.add_argument("--write-baseline", action="store_true")
     bursts = sub.add_parser("bursts", help="burst grouping on make_synthetic_copies.py --bursts")
     bursts.add_argument("data", type=Path, help="folder from make_synthetic_copies.py --bursts")
     bursts.add_argument("--work", type=Path, help="project folder to use (default: a temp folder)")
@@ -1035,6 +1485,7 @@ def main(argv: list[str] | None = None) -> int:
         ("prelabel", "write labels.csv and labels.html into the labeled set's folder"),
         ("people", "per-person precision and recall on the checked rows of labels.csv"),
         ("categories", "per-category precision and recall, and the selfie hint"),
+        ("videos", f"people and categories of the videos against {VIDEO_LABELS_CSV}"),
     ):
         p = sub.add_parser(name, help=text)
         p.add_argument("--refs", type=Path, help="refs folder: one photo per friend")
@@ -1051,8 +1502,13 @@ def main(argv: list[str] | None = None) -> int:
         if name == "prelabel":
             p.add_argument("--force", action="store_true", help="replace an existing labels.csv")
             p.add_argument("--categories-only", action="store_true", help="a set with no people")
+            p.add_argument(
+                "--videos", action="store_true", help=f"write {VIDEO_LABELS_CSV} for the videos"
+            )
         else:
-            default_name = "private_dev" if name == "people" else "private_categories_dev"
+            default_name = {"people": "private_dev", "videos": "private_videos_dev"}.get(
+                name, "private_categories_dev"
+            )
             p.add_argument("--split", choices=("dev", "test"), default="dev")
             p.add_argument("--name", default=default_name, help="baseline key")
             p.add_argument("--write-baseline", action="store_true")
@@ -1083,9 +1539,35 @@ def main(argv: list[str] | None = None) -> int:
     root = args.labeled_set if args.labeled_set is not None else eval_dir()
     if not root.is_dir():
         raise SystemExit("the labeled set is not a folder")
+    if args.command in ("cull-prelabel", "cull"):
+        cull_overrides = dict(item.split("=", 1) for item in args.set)
+        run_cull = cull_prelabel if args.command == "cull-prelabel" else evaluate_cull
+        outcome = _hidden_errors(
+            lambda: _with_work(
+                args.work, lambda w: run_cull(root, w, cull_overrides, review=args.review)
+            )
+        )
+        if outcome is None:
+            return 1
+        print(json.dumps(outcome, indent=2))
+        if args.command == "cull" and args.write_baseline and "label_problems" not in outcome:
+            default_name = "private_cull_review" if args.review else "private_cull_dev"
+            _save_baseline("cull", args.name or default_name, outcome)
+        return 0
     overrides = _config_overrides(args.config) if args.config is not None else {}
     overrides.update(item.split("=", 1) for item in args.set)
-    if args.command == "prelabel":
+    if args.command == "prelabel" and args.videos:
+        outcome = _hidden_errors(
+            lambda: _with_work(args.work, lambda w: video_prelabel(root, w, args.refs, overrides))
+        )
+    elif args.command == "videos":
+        outcome = _hidden_errors(
+            lambda: _with_work(
+                args.work,
+                lambda w: evaluate_videos(root, w, args.refs, args.split, overrides),
+            )
+        )
+    elif args.command == "prelabel":
         outcome = _hidden_errors(
             lambda: _with_work(
                 args.work,
@@ -1119,7 +1601,7 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(outcome, indent=2))
     section = args.command
     saving = getattr(args, "write_baseline", False)
-    if saving and section in ("people", "categories") and section in outcome:
+    if saving and section in ("people", "categories", "videos") and "label_problems" not in outcome:
         _save_baseline(section, args.name, outcome)
     return 0
 

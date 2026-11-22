@@ -837,21 +837,27 @@ def write_page(
     csv_sha256: str = "",
     can_save: bool = True,
     categories_only: bool = False,
+    csv_name: str = "labels.csv",
 ) -> None:
     """Write the page for ``cards`` (the rows of labels.csv), with a button for each of
     ``names``. ``csv_sha256`` is labels.csv's SHA-256 as the cards were read from it;
     ``can_save`` is off when some rows of labels.csv could not be read, since saving would
-    drop them. ``categories_only`` offers the category alone."""
+    drop them. ``categories_only`` offers the category alone. ``csv_name`` is the file the
+    page writes (video_labels.csv for the videos), in its text and its Save button."""
     data = page_data(
         cards, names, csv_sha256=csv_sha256, can_save=can_save, categories_only=categories_only
     )
+
+    def named(text: str) -> str:
+        return text.replace("labels.csv", csv_name)
+
     parts = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width, initial-scale=1'>",
         f"<title>Labels: {len(cards):,} rows</title><style>{_STYLE}</style></head><body>",
-        _BAR,
+        named(_BAR),
         "<main>",
-        _RULES_CATEGORIES if categories_only else _RULES,
+        named(_RULES_CATEGORIES if categories_only else _RULES),
         "<noscript><p class='banner'>This page needs JavaScript to label.</p></noscript>",
         "<div class='banner' id='banner' hidden></div>",
         "<div class='cards'>",
@@ -880,9 +886,9 @@ def write_page(
         )
     parts += [
         "</div></main>",
-        _HELP_CATEGORIES if categories_only else _HELP,
+        named(_HELP_CATEGORIES if categories_only else _HELP),
         f"<script type='application/json' id='labels-data'>{_script_json(data)}</script>",
-        f"<script>{_SCRIPT}</script></body></html>\n",
+        f"<script>{named(_SCRIPT)}</script></body></html>\n",
     ]
     tmp = path.with_suffix(".tmp")
     tmp.write_text("".join(parts), encoding="utf-8")
