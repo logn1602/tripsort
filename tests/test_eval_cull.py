@@ -108,6 +108,7 @@ def test_a_set_gets_culling_labels_and_scores(
     assert made["photos_without_thumbnail"] == 0
     page = (flat / "cull.html").read_text(encoding="utf-8")
     assert "Save cull_labels.csv" in page
+    assert 'e.key.toLowerCase() === "s"' in page  # Ctrl+S saves the labels, not the page
     with (flat / "cull_labels.csv").open(encoding="utf-8", newline="") as fp:
         labels = list(csv.DictReader(fp))
     assert {r["label"] for r in labels} == {""}  # nothing is pre-filled

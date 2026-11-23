@@ -5,8 +5,9 @@ A photo card asks whether the photo is fine, blurry, too dark, or blown out (key
 Enter or the next key moves on). A burst card shows the burst's shots in time order: click
 the one you would keep, or "any is fine". Every
 card starts unlabeled, so nothing is a guess to confirm. Changes are kept in the browser as
-you go; **Save cull_labels.csv** writes the file in place where the browser allows it (Edge,
-Chrome), else downloads it to put next to this page.
+you go; **Save cull_labels.csv** (or Ctrl+S, which never saves the page itself) writes the
+file in place where the browser allows it (Edge, Chrome), else downloads it to put next to
+this page.
 
 The page shows your photos. It is written next to labels.csv, in the labeled set's folder,
 never in the repository.
@@ -131,8 +132,8 @@ _RULES = """
 would not want in a friend's folder. Keys 1 to 4 label the photo in focus and move on.</p>
 <p>For each <b>burst</b>: click the shot you would keep, or <b>any is fine</b> when they are
 as good as each other.</p><p>Nothing is pre-filled. Your work is kept in this browser as you
-go; <b>Save cull_labels.csv</b> writes the file next to this page (Edge and Chrome write it in
-place; other browsers download it).</p></div>
+go; <b>Save cull_labels.csv</b> (or Ctrl+S) writes the file next to this page (Edge and
+Chrome write it in place; other browsers download it).</p></div>
 """
 
 _SCRIPT = r"""
@@ -254,6 +255,14 @@ _SCRIPT = r"""
   }
 
   document.getElementById("save").addEventListener("click", save);
+  // Ctrl+S (Cmd+S) saves cull_labels.csv; the browser's own save would write the page itself
+  document.addEventListener("keydown", (e) => {
+    if (e.isComposing) return;
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      save();
+    }
+  });
   draw();
   if (photos[0]) photos[0].focus();
 })();
