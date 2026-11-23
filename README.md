@@ -25,14 +25,16 @@ make up the rest. Every frame comes from a real run
 
 ## Quick start
 
-You need Python 3.11 or newer. With [uv](https://docs.astral.sh/uv/), run it without
-installing anything:
+With [uv](https://docs.astral.sh/uv/), run it without installing anything:
 
 ```console
-uvx tripsort run mine.zip sam.zip alex.zip -o sorted/ --refs refs/
+uvx --python 3.13 tripsort run mine.zip sam.zip alex.zip -o sorted/ --refs refs/
 ```
 
-Or install it with pip: `pip install tripsort`, then `tripsort run ...` as above.
+`--python 3.13` makes uv use Python 3.13, downloading it if needed. tripsort supports Python
+3.11 to 3.13, the versions CI tests; it does not run on 3.15 yet, because onnxruntime, which
+runs the models, has no wheels for it. With pip, on one of those versions:
+`pip install tripsort`, then `tripsort run ...` as above.
 
 - **`refs/`** holds one clear photo of each friend, named after them (`refs/sam.jpg`), and
   names their folders. Without it the folders are `person_01`, `person_02`, and so on, and you
@@ -50,7 +52,7 @@ To try it on the demo trip from the GIF, clone this repository and run:
 
 ```console
 uv run tools/demo_trip.py build demo
-uvx tripsort run demo/lisa.zip demo/george.zip demo/pearl.zip -o demo/sorted --refs demo/refs
+uvx --python 3.13 tripsort run demo/lisa.zip demo/george.zip demo/pearl.zip -o demo/sorted --refs demo/refs
 ```
 
 ## What you get
@@ -138,6 +140,8 @@ the folders before you share them. These are the weak spots, each with an open i
 - **Speed:** reading photos with faces runs at about 3 to 7 files per second on a laptop CPU
   ([#9](https://github.com/logn1602/tripsort/issues/9)), and Google Takeout's JSON dates are
   not read yet ([#3](https://github.com/logn1602/tripsort/issues/3)).
+- **Not on Python 3.15 yet:** onnxruntime has no wheels for it, so `pip install tripsort`
+  fails there. `uvx --python 3.13`, as in the quick start, works on any computer.
 
 ## Configuration
 

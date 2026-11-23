@@ -18,13 +18,16 @@ decisions, with the measurements behind them, are in the [decision log](decision
 
 ## Install
 
-Requires Python 3.11 or newer.
+tripsort supports Python 3.11 to 3.13, the versions CI tests. It does not run on Python 3.15
+yet, because onnxruntime, which runs the models, has no wheels for it.
 
 ```console
 pip install tripsort
 ```
 
-Or run it without installing, with uv: `uvx tripsort --version`.
+Or run it without installing, with uv, which downloads Python 3.13 if needed:
+`uvx --python 3.13 tripsort --version`. Without `--python`, uvx uses the computer's default
+Python, which fails when that is 3.15.
 
 To look inside videos as well (categories, Live Photo lengths, dates, and people if turned
 on), add the `video` extra, which brings [PyAV](https://github.com/PyAV-Org/PyAV) and the

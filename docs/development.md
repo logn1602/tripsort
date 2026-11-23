@@ -6,7 +6,7 @@ holds the settled design decisions with the measurements behind them.
 
 ## Setup
 
-The project uses [uv](https://docs.astral.sh/uv/) for everything, with Python 3.11 or newer.
+The project uses [uv](https://docs.astral.sh/uv/) for everything, with Python 3.11 to 3.13.
 
 ```console
 uv sync --all-extras                 # create .venv with the dev tools and the video extra
@@ -21,9 +21,10 @@ CI (`.github/workflows/ci.yml`) runs on every push to `main` and every pull requ
 
 - the tests, linters, and type checks on Windows, macOS, and Linux with Python 3.11 to 3.13;
 - the [eval gate](#the-ci-eval-gate), once per OS (Python 3.13);
-- a fresh install on each OS: the built wheel through `uvx tripsort run` on the
-  [demo trip](#the-demo-trip-and-the-gif), with no model cache, so the models download and
-  pass their SHA-256 checks as on a new computer, and `tools/demo_trip.py check` on the output;
+- a fresh install on each OS: the built wheel through `uvx --python 3.13 tripsort run`, the
+  README's quick start, on the [demo trip](#the-demo-trip-and-the-gif), with no model cache, so
+  the models download and pass their SHA-256 checks as on a new computer, and
+  `tools/demo_trip.py check` on the output;
 - a tiny zip through `tripsort run` from the built wheel (`tools/smoke_test.py`), which catches
   files missing from the wheel.
 
@@ -212,6 +213,6 @@ left out and counted as `labeled_names_without_a_ref`.
    through it, then publishes to PyPI. Both uploads use Trusted Publishing, so the repo stores no
    tokens.
 4. Last, on Windows, macOS, and Linux, it waits until the new version installs from PyPI, runs
-   `uvx --from tripsort==<version> tripsort run` on the demo trip with freshly downloaded models,
-   and checks the output.
+   `uvx --python 3.13 --from tripsort==<version> tripsort run` on the demo trip with freshly
+   downloaded models, and checks the output.
 5. To repeat the TestPyPI install check locally: `uv run tools/verify_testpypi.py`.

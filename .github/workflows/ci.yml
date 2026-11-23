@@ -92,10 +92,11 @@ jobs:
         run: uv run tools/demo_trip.py build "$RUNNER_TEMP/demo"
 
       # No model cache here: the face and CLIP models download and are checked against their
-      # pinned SHA-256, as on a new computer.
+      # pinned SHA-256, as on a new computer. --python as in the README's quick start: the
+      # runners' default Python may be 3.15, which onnxruntime has no wheels for yet.
       - name: Run tripsort from the wheel with uvx
         run: >-
-          uvx --from dist/tripsort-*.whl tripsort run
+          uvx --python 3.13 --from dist/tripsort-*.whl tripsort run
           "$RUNNER_TEMP/demo/lisa.zip" "$RUNNER_TEMP/demo/george.zip" "$RUNNER_TEMP/demo/pearl.zip"
           -o "$RUNNER_TEMP/demo/sorted" --refs "$RUNNER_TEMP/demo/refs"
 
