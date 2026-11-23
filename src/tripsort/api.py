@@ -156,23 +156,28 @@ def _category_lines(c: CategoryStats, b: BurstStats, q: CullStats) -> list[str]:
         )
     if b.bursts:
         lines.append(
-            f"Found {count(b.bursts, 'burst')} ({count(b.photos, 'photo')}); the best shot of "
-            "each goes to the people, shot, and category folders, every shot stays in all/, "
-            "and bursts/ shows them side by side."
+            f"Found {count(b.bursts, 'burst')} ({count(b.photos, 'photo')}); the best shot"
+            f"{'' if b.bursts == 1 else ' of each'} goes to the people, shot, and category "
+            "folders, every shot stays in all/, and bursts/ shows them side by side."
         )
     if rejected := sum(q.rejects.values()):
         reasons = ", ".join(
             f"{n:,} {reason.replace('_', ' ')}" for reason, n in q.rejects.items() if n
         )
+        one = rejected == 1
+        flagged = f"{count(rejected, 'photo')} flagged as {'a reject' if one else 'rejects'}"
+        they, them = ("it", "it") if one else ("they", "them")
         if q.hidden:
             lines.append(
-                f"{count(rejected, 'photo')} flagged as rejects ({reasons}): they stay in all/ "
-                "and go to rejects/, not the people, shot, or category folders."
+                f"{flagged} ({reasons}): {they} {'stays' if one else 'stay'} in all/ "
+                f"and {'goes' if one else 'go'} to rejects/, not the people, shot, or category "
+                "folders."
             )
         else:
             lines.append(
-                f"{count(rejected, 'photo')} flagged as rejects ({reasons}): rejects/ lists them "
-                "to check, and they stay in their folders (hide_rejects = true leaves them out)."
+                f"{flagged} ({reasons}): rejects/ lists {them} to check, and {they} "
+                f"{'stays in its' if one else 'stay in their'} folders "
+                "(hide_rejects = true leaves them out)."
             )
     if q.not_scored:
         lines.append(
