@@ -66,5 +66,5 @@ food, documents, and photos that fit none of these); their sources and licenses 
 
 `docs/demo.gif`, the demo in the README, is drawn by `tools/make_demo_gif.py` from those
 fixtures only: the three paintings, pasted in front of the category photos for some shots, and
-the category photos themselves (all but the road bike, with the lion blurred). Like the
+the category photos themselves (all 25 of them, with the lion blurred). Like the
 fixtures, it shows no real person's photo.

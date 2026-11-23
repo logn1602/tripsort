@@ -11,16 +11,21 @@ and group shots, scenery, animals, food, and documents, the best shot of each bu
 photos listed to check. It runs offline on an ordinary laptop: no account, no uploads, no
 telemetry.
 
-![Animated demo. Before: three zips from three friends' phones, 50 photos, with the exact
+![Animated demo. Before: three zips from three friends' phones, 51 photos, with the exact
 duplicates and WhatsApp copies among them marked. Then the command tripsort run lisa.zip
 george.zip pearl.zip -o sorted/ --refs refs/ prints its summary. After: the sorted folder
-holds all/ with the 40 photos kept, a folder for each friend named from refs/, solo and group
+holds all/ with the 41 photos kept, a folder for each friend named from refs/, solo and group
 shots, scenery, animals, food, and documents, a burst of three shots with the sharpest marked
-best, and a blurry photo listed to check. The friends are public-domain portrait
+best, and a blurry photo listed to check. In the animals folder, a road bike is marked wrong,
+a known limit. The friends are public-domain portrait
 paintings.](https://raw.githubusercontent.com/logn1602/tripsort/v0.4.0/docs/demo.gif)
 
-<sub>The demo trip: three public-domain portrait paintings play the friends, and CC0 photos
-make up the rest. Every frame comes from a real run
+<sub>The demo trip: three public-domain portrait paintings play the friends, and the 25
+public-domain and CC0 photos of the
+[public test sample](https://github.com/logn1602/tripsort/blob/main/tests/fixtures/README.md)
+make up the rest. tripsort puts 24 of the 25 in the right category; the road bike lands in
+`animals/`, one of the [known limits](https://github.com/logn1602/tripsort#known-limits).
+Every frame comes from a real run
 ([how it is made](https://github.com/logn1602/tripsort/blob/main/tools/make_demo_gif.py)).</sub>
 
 ## Quick start
@@ -113,7 +118,7 @@ copies and bursts, must score within 2 points of
 ## Known limits
 
 tripsort is alpha: the folder layout and the Python API may still change before 1.0. Check
-the folders before you share them. These are the weak spots, each with an open issue:
+the folders before you share them. These are the weak spots, most with an open issue:
 
 - **Smaller trips are less precise.** Replaying half and a quarter of the labeled trip, people
   precision fell to about 0.98 and 0.93
@@ -126,8 +131,9 @@ the folders before you share them. These are the weak spots, each with an open i
   some photos that are not documents land in `documents/`
   ([#14](https://github.com/logn1602/tripsort/issues/14)), and animals can land in `other`,
   mostly when the detector finds a face in them
-  ([#15](https://github.com/logn1602/tripsort/issues/15)). A view with friends in front of it
-  goes to `other` on purpose. Category prompts work in English only.
+  ([#15](https://github.com/logn1602/tripsort/issues/15)). The other way round, a photo of a
+  thing can land in `animals/`, as the road bike in the demo does. A view with friends in front
+  of it goes to `other` on purpose. Category prompts work in English only.
 - **Rejects are only suggestions.** On a fresh trip, half the photos flagged were fine, so
   they stay in every folder ([#18](https://github.com/logn1602/tripsort/issues/18)).
 - **The best shot of a burst** matched the shot a person preferred 14 times in 28, about

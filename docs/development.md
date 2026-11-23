@@ -52,6 +52,8 @@ friends (alone, pasted in front of the sample's views, and side by side in group
 category sample makes up the rest, and the three zips share photos byte for byte, hold
 WhatsApp-style copies, a three-shot burst, a blurry photo, and some junk. Its `truth.json`
 says what each member is, and `check` compares a run's `manifest.json` and folders with it.
+The whole category sample is in the trip, the road bike too: tripsort puts the bike in animals
+(a known miss), `check` allows that, and the GIF marks it wrong rather than leaving it out.
 
 ```console
 uv run tools/demo_trip.py build demo

@@ -22,10 +22,10 @@ def trip(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return folder
 
 
-def perfect_run(trip: Path, out: Path) -> dict[str, Any]:
-    """What `tripsort run` writes for the trip when it gets everything right: manifest.json
-    (the fields the checker and the GIF read) and the folders, with the photos copied out of
-    the zips. Returns the manifest."""
+def perfect_run(trip: Path, out: Path, known_misses: bool = False) -> dict[str, Any]:
+    """What `tripsort run` writes for the trip when it gets everything right (or everything
+    but its known misses): manifest.json (the fields the checker and the GIF read) and the
+    folders, with the photos copied out of the zips. Returns the manifest."""
     truth = [demo_trip.Member(**m) for m in json.loads((trip / "truth.json").read_text("utf-8"))]
     data: dict[tuple[str, str], bytes] = {}
     for name in demo_trip.ZIPS:
@@ -40,6 +40,7 @@ def perfect_run(trip: Path, out: Path) -> dict[str, Any]:
         if m.role == "copy":
             files.append({"occurrences": [place], "keeper": False, "copy_of": "sha", "people": []})
             continue
+        category = (known_misses and m.known_miss) or m.category
         if m.origin not in kept:
             kept[str(m.origin)] = {
                 "occurrences": [],
@@ -47,7 +48,7 @@ def perfect_run(trip: Path, out: Path) -> dict[str, Any]:
                 "copy_of": None,
                 "status": "ok",
                 "people": m.people,
-                "category": None if m.category == "other" else m.category,
+                "category": None if category == "other" else category,
                 "burst": 1 if m.burst else None,
                 "burst_best": m.burst_best if m.burst else None,
                 "reject": m.reject,
@@ -90,7 +91,7 @@ def test_the_demo_trip_is_the_same_bytes_every_time(trip: Path, tmp_path: Path) 
     for name in [f"{z}.zip" for z in demo_trip.ZIPS] + ["truth.json", "refs/lisa.jpg"]:
         assert (trip / name).read_bytes() == (tmp_path / "again" / name).read_bytes(), name
     assert Counter(m.role for m in members) == {
-        "photo": 40,
+        "photo": 41,
         "exact_duplicate": 5,
         "copy": 5,
         "junk": 2,
@@ -107,6 +108,11 @@ def test_the_demo_trip_is_the_same_bytes_every_time(trip: Path, tmp_path: Path) 
         assert sum(m.category == category for m in originals) >= 4
     assert [m.origin for m in originals if m.reject] == ["lion_blurry"]
     assert [m.origin for m in originals if m.burst_best] == ["sunset_2"]
+    assert [(m.origin, m.known_miss) for m in originals if m.known_miss] == [
+        ("road_bike", "animals")
+    ]
+    alone = [m for m in originals if not m.people and (m.burst is None or m.burst_best)]
+    assert len(alone) == 25  # the whole public category sample, the burst counted once
 
 
 def test_the_check_passes_a_run_that_got_everything_right(trip: Path, tmp_path: Path) -> None:
@@ -122,11 +128,14 @@ def test_the_check_fails_without_a_manifest(
     assert "no manifest.json" in capsys.readouterr().err
 
 
-def _file(manifest: dict[str, Any], member_prefix: str) -> dict[str, Any]:
+def _photo(trip: Path, manifest: dict[str, Any], origin: str) -> dict[str, Any]:
+    """The manifest's kept file for one photo of the trip."""
+    truth = json.loads((trip / "truth.json").read_text("utf-8"))
+    member = next(m["member"] for m in truth if m["origin"] == origin and m["role"] == "photo")
     return next(
         f
         for f in manifest["files"]
-        if f["keeper"] and f["occurrences"][0]["member"].startswith(member_prefix)
+        if f["keeper"] and any(o["member"] == member for o in f["occurrences"])
     )
 
 
@@ -187,20 +196,26 @@ def test_the_check_names_what_went_wrong(
     assert "demo check FAILED" in capsys.readouterr().err
 
 
-def test_one_wrong_category_is_tolerated(trip: Path, tmp_path: Path) -> None:
-    """A close call may land either way on another CPU (see tests/test_categories.py)."""
+def test_the_known_miss_and_one_close_call_are_tolerated(trip: Path, tmp_path: Path) -> None:
+    """tripsort puts the road bike in animals (the README's known limits), and a close call
+    may land either way on another CPU (see tests/test_categories.py)."""
     out = tmp_path / "sorted"
-    manifest = perfect_run(trip, out)
-    _file(manifest, "IMG_")["category"] = "documents"  # Lisa's portrait, an `other` photo
+    manifest = perfect_run(trip, out, known_misses=True)
+    assert _photo(trip, manifest, "road_bike")["category"] == "animals"
+    _photo(trip, manifest, "lisa_portrait")["category"] = "documents"  # an `other` photo
     (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     assert demo_trip.check(out, trip) == []
+
+    _photo(trip, manifest, "road_bike")["category"] = "food"  # not its known miss: it counts
+    (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    assert any("wrong categories" in p for p in demo_trip.check(out, trip))
 
 
 def test_the_gif_draws_the_run(trip: Path, tmp_path: Path) -> None:
     out = tmp_path / "sorted"
-    perfect_run(trip, out)
-    run = make_demo_gif.load_run(trip, out, "50 files in 3 zips\nKeeping 40 files\n")
-    assert Counter(run.found.values()) == {"kept": 40, "duplicate": 5, "copy": 5}
+    perfect_run(trip, out, known_misses=True)
+    run = make_demo_gif.load_run(trip, out, "51 files in 3 zips\nKeeping 41 files\n")
+    assert Counter(run.found.values()) == {"kept": 41, "duplicate": 5, "copy": 5}
     assert [f.path for f in run.folders][:4] == [
         "all",
         "people/lisa",
@@ -211,6 +226,11 @@ def test_the_gif_draws_the_run(trip: Path, tmp_path: Path) -> None:
     burst = run.folders[-2]
     assert burst.best is not None
     assert burst.files[1] == burst.best  # in the order taken: the middle shot is the best
+    # The known miss is shown where tripsort put it, and marked.
+    animals = next(f for f in run.folders if f.path == "categories/animals")
+    assert [f.path for f in run.folders if f.wrong] == ["categories/animals"]
+    assert len(animals.wrong) == 1
+    assert animals.note.endswith("; marked wrong: the road bike, a known limit")
 
     frames = make_demo_gif.frames(run)
     assert run.palette is not None

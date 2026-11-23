@@ -163,8 +163,9 @@ class ExportResult:
                     "shots/, and categories/."
                 )
             else:
+                they = "it stays" if rejected == 1 else "they stay"
                 lines.append(
-                    f"rejects/ lists {count(rejected, 'file')} ({reasons}) to check; they stay "
+                    f"rejects/ lists {count(rejected, 'file')} ({reasons}) to check; {they} "
                     "in people/, shots/, and categories/ too."
                 )
         if self.bursts:

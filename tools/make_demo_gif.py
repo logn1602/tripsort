@@ -6,8 +6,9 @@ It builds the demo trip of tools/demo_trip.py (public-domain and CC0 images only
 temporary folder, runs ``tripsort run`` on it with this interpreter (the face and CLIP models
 download on first use), checks the result with demo_trip.py's check, and draws every frame
 from what the run produced: the zips' members, the summary tripsort printed, manifest.json,
-and the exported folders. Nothing in it is typed in by hand. ``--keep DIR`` keeps the trip and
-the sorted folder there.
+and the exported folders. Nothing in it is typed in by hand. A photo in a category it does not
+belong to (by the trip's truth.json) is marked wrong, not left out. ``--keep DIR`` keeps the
+trip and the sorted folder there.
 
 Fonts come from the system (Segoe UI and Consolas on Windows, where the committed GIF was
 drawn; Helvetica and Menlo on macOS; DejaVu on Linux), else Pillow's own.
@@ -73,6 +74,7 @@ SKIPPED = {"shots/solo"}  # in the tree, but not shown on its own: the GIF stays
 LARGEST_CELL = 136  # px; bigger photos make a bigger file (each folder's frame redraws them)
 HOLD_MS = {"before": 2400, "found": 2600, "typing": 300, "output": 3800, "all": 1700}
 FOLDER_MS = 1150
+MARKED_MS = 2400  # a folder with a photo marked wrong: time to read why
 
 
 @dataclass
@@ -81,6 +83,7 @@ class Folder:
     files: list[Path]
     note: str
     best: Path | None = None  # in a burst's folder, its best shot
+    wrong: list[Path] = field(default_factory=list)  # in a category's, photos of another one
 
 
 @dataclass
@@ -133,6 +136,9 @@ def load_run(trip_dir: Path, sorted_dir: Path, output: str) -> Run:
                 for info in archive.infolist()
                 if (name, info.filename) not in junk
             ]
+    # tripsort exports a photo byte for byte, so its bytes tell which member of the trip it is.
+    member_of = {(m["zip"], m["member"]): m for m in truth}
+    truth_of = {data: member_of[(z, member)] for z in zips for member, data in zips[z]}
 
     manifest = json.loads((sorted_dir / "manifest.json").read_text(encoding="utf-8"))
     order = {name: i for i, name in enumerate(demo_trip.ZIPS)}
@@ -159,8 +165,17 @@ def load_run(trip_dir: Path, sorted_dir: Path, output: str) -> Run:
 
     def add(prefix: str, name: str, path: str, note: str, files: list[Path]) -> None:
         best = next((f for f in files if f.name.startswith("best_")), None)
+        wrong: list[Path] = []
+        if path.startswith("categories/"):  # what tripsort got wrong is marked, not left out
+            category = path.removeprefix("categories/")
+            wrong = [f for f in files if truth_of[f.read_bytes()]["category"] != category]
+            members = [truth_of[f.read_bytes()] for f in wrong]
+            if members:
+                what = ", ".join(f"the {m['origin'].replace('_', ' ')}" for m in members)
+                known = all(m.get("known_miss") == category for m in members)
+                note = f"{note}; marked wrong: {what}{', a known limit' if known else ''}"
         tree.append(Row(prefix, name, len(files), len(folders)))
-        folders.append(Folder(path, files, note, best))
+        folders.append(Folder(path, files, note, best, wrong))
 
     def branch(name: str, children: list[tuple[str, str, str]]) -> None:
         tree.append(Row("├─ ", f"{name}/"))
@@ -360,6 +375,8 @@ def after(run: Run, shown: int) -> Image.Image:
         paste_in_cell(run, image, path.read_bytes(), (cx, cy, cx + side, cy + side))
         if path == folder.best:
             badge(draw, (cx + 6, cy + 6), "best", GREEN)
+        if path in folder.wrong:
+            badge(draw, (cx + 6, cy + 6), "wrong", RED)
     return image
 
 
@@ -375,7 +392,8 @@ def frames(run: Run) -> list[Frame]:
     out.append(Frame(terminal(" ".join(COMMAND), run.output[:16]), HOLD_MS["output"]))
     for k, folder in enumerate(run.folders):
         if folder.path not in SKIPPED:
-            out.append(Frame(after(run, k), HOLD_MS.get(folder.path, FOLDER_MS)))
+            hold = HOLD_MS.get(folder.path, MARKED_MS if folder.wrong else FOLDER_MS)
+            out.append(Frame(after(run, k), hold))
     return out
 
 

@@ -12,17 +12,19 @@ Every image comes from tests/fixtures (sources and licenses in tests/fixtures/RE
 public-domain portrait paintings play three friends, Lisa (the Mona Lisa), George (Gilbert
 Stuart's George Washington), and Pearl (Girl with a Pearl Earring): on their own, pasted in
 front of the sample's views and rooms, and side by side in group shots. The rest of the trip is
-the public category sample, minus the road bike, which CLIP puts in animals (a known miss the
-tests keep), and with the lion out of focus, as the photo to flag. Like a real trip, the three
-zips share some photos byte for byte, hold WhatsApp copies (smaller, recompressed, no EXIF) of
-others, a three-shot burst where only the middle shot is sharp, and a little junk.
+the public category sample, all 25 photos, with the lion out of focus as the photo to flag.
+tripsort puts 24 of the 25 in the right category: the road bike lands in animals, a known miss
+(the README's known limits) that ``check`` allows and the GIF marks. Like a real trip, the
+three zips share some photos byte for byte, hold WhatsApp copies (smaller, recompressed, no
+EXIF) of others, a three-shot burst where only the middle shot is sharp, and a little junk.
 
 ``truth.json`` says what each zip member is. ``check`` reads the run's manifest.json and
 folders and fails (exit 1) unless tripsort found what the trip holds: every copy, the three
-friends named from refs/ with no wrong photo (and at most one missed), the categories (at most
-one photo wrong, since a close call may land either way on another CPU), the burst and its best
-shot, and the blurry photo. The fresh-install CI job, tests/test_demo.py, and
-tools/make_demo_gif.py use it. With the same Pillow, every build writes the same bytes.
+friends named from refs/ with no wrong photo (and at most one missed), the categories (the
+road bike in animals or in other, and at most one more photo wrong, since a close call may land
+either way on another CPU), the burst and its best shot, and the blurry photo. The
+fresh-install CI job, tests/test_demo.py, and tools/make_demo_gif.py use it. With the same
+Pillow, every build writes the same bytes.
 """
 
 import argparse
@@ -64,6 +66,7 @@ class Member:
     burst: str | None = None
     burst_best: bool = False
     reject: str | None = None
+    known_miss: str | None = None  # the category tripsort puts it in instead (a known limit)
 
 
 @dataclass
@@ -77,6 +80,7 @@ class Photo:
     burst_best: bool = False
     reject: str | None = None
     seconds_after_previous: int | None = None  # burst shots follow the shot before them
+    known_miss: str | None = None
 
 
 def fixture(relative: str) -> Image.Image:
@@ -294,6 +298,8 @@ def trip() -> list[Photo]:
             burst="sunset",
             seconds_after_previous=1,
         ),
+        # A photo of a thing, which tripsort puts in animals: the public sample's known miss.
+        Photo("road_bike", pearl, _plain("categories/other/road_bike.jpg"), known_miss="animals"),
     ]
 
 
@@ -411,6 +417,7 @@ def _member(zip_name: str, member: str, role: str, photo: Photo) -> Member:
         burst=photo.burst,
         burst_best=photo.burst_best,
         reject=photo.reject,
+        known_miss=photo.known_miss,
     )
 
 
@@ -466,11 +473,11 @@ def check(sorted_dir: Path, trip_dir: Path) -> list[str]:
         if len(list(folder.glob("*"))) != len(found):
             problems.append(f"people/{friend}/ does not hold the {len(found)} photos found")
 
-    wrong_categories = sorted(
-        f"{o} ({m.category} as {kept[o]['category']})"
-        for o, m in originals.items()
-        if o in kept and (kept[o]["category"] or "other") != m.category
-    )
+    wrong_categories = []  # a photo in the category of its known miss does not count
+    for o, m in originals.items():
+        got = str(kept[o]["category"] or "other") if o in kept else m.category
+        if got not in (m.category, m.known_miss):
+            wrong_categories.append(f"{o} ({m.category} as {got})")
     if len(wrong_categories) > 1:
         problems.append(f"wrong categories: {wrong_categories}")
     for name in CATEGORIES:
