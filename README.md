@@ -2,11 +2,12 @@
 
 Offline Python library + CLI that merges trip photo zips, removes duplicates, and sorts photos by person, shot type, and category.
 
-> **Status: alpha (0.2.0).** This version reads your zips, removes exact duplicates and
-> recompressed copies (such as WhatsApp copies), finds everyone's faces, sorts photos into
-> categories (scenery, animals, food, documents), groups bursts, and exports one clean folder
-> plus a folder per person, shot type (solo, group, selfie), and category, with a
-> `manifest.json`. Culling bursts down to the best shot comes in a later release.
+> **Status: alpha (0.3.0).** This version reads your zips, removes exact duplicates and
+> recompressed copies (such as WhatsApp copies), finds everyone's faces in photos and videos,
+> sorts them into categories (scenery, animals, food, documents), picks the best shot of each
+> burst, sets clearly blurry, dark, and blown-out photos aside, keeps Live Photos together, and
+> exports one clean folder plus a folder per person, shot type (solo, group, selfie), and
+> category, with a `manifest.json`. Flagging closed eyes comes in a later release.
 
 ## What it does
 
@@ -16,12 +17,16 @@ After a group trip, everyone has a zip of photos from their own phone. tripsort 
 - groups faces by person across every zip, so each friend gets a folder with every photo they appear in, named from one reference photo per friend;
 - splits shots into solo, group, and selfie, ignoring strangers in the background;
 - sorts photos into categories such as scenery, animals, food, and documents, defined as editable text prompts;
-- groups bursts, several shots of one moment, so the best one can be picked later;
+- groups bursts, several shots of one moment, and puts the best shot in the folders, plus each
+  friend's own best shot of the moment when the best one leaves them out;
+- sets clearly blurry, dark, and blown-out photos aside for review, without deleting anything;
+- finds friends in videos and sorts videos into categories (with the `video` extra), and keeps
+  each Live Photo's motion clip next to its still;
 - exports plain folders plus a `manifest.json`, and never modifies the input zips.
 
 Planned for later releases:
 
-- culls bursts down to the best shot and flags blurry, dark, or eyes-closed photos without deleting anything.
+- flags photos where someone's eyes are closed.
 
 Everything runs locally on an ordinary laptop CPU: no account, no cloud uploads, no telemetry.
 
@@ -35,6 +40,16 @@ pip install tripsort
 
 Or run it without installing, with uv: `uvx tripsort --version`.
 
+To look inside videos as well (people, categories, Live Photo lengths, and dates), add the
+`video` extra, which brings [PyAV](https://github.com/PyAV-Org/PyAV) and the FFmpeg its
+wheels bundle:
+
+```console
+pip install "tripsort[video]"
+```
+
+Without it, videos are still deduplicated by content and exported to `all/`.
+
 ## Usage
 
 ```console
@@ -47,6 +62,8 @@ sorted/
 ├── people/          a folder per person: alex/, sam/, person_03/, ...
 ├── shots/           solo/, group/, selfie/
 ├── categories/      scenery/, animals/, food/, documents/ (other photos get no folder)
+├── rejects/         blurry/, dark/, blown_out/: photos left out of the three folders above
+├── bursts/          a folder per burst with every shot; the best one is named best_...
 ├── unreadable/      files whose bytes could be read but not decoded, for review
 ├── duplicates/      only with --export-duplicates: each kept file next to its copies
 ├── manifest.json    every file, where it came from, and what tripsort decided
@@ -211,7 +228,7 @@ pass that finds faces, and keeps the result in the index.
 - **Bursts.** Shots from one camera at most `burst_window_seconds` (10) after a burst's first
   shot, and at least `burst_similarity` (0.92) alike, form a burst; only EXIF and file name
   times count. Every shot stays in `all/`, `manifest.json` gives each photo's burst number,
-  and a later release will pick the best shot of each burst.
+  and the best shot goes into the other folders (see Best shots and rejects).
 
 The defaults were tuned on half of two labeled sets and then checked once on the other half.
 On a trip of 692 photos, most of them of people, the test half gave scenery 89% precision at
@@ -231,17 +248,75 @@ next ingest. Without the model, tripsort still removes duplicates, sorts people,
 exits with 2, and the next `tripsort ingest sorted/` embeds the photos it missed. CLIP's
 OpenAI weights are MIT licensed; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
+## Best shots and rejects
+
+tripsort never deletes a photo: culling only decides which folders a photo goes in, and every
+kept file stays in `all/`. Sharpness and exposure are scored once, in the pass that reads each
+photo's pixels.
+
+- **Sharpness** is the variance of the Laplacian of a gray copy at most 512 px on its long
+  side, for the whole photo and for its sharpest tiles (the mean of the best 4 of a 4 x 4
+  grid), so a portrait with a soft background, sharp only where the person is, is not blurry.
+- **Rejects.** A photo is dark when its mean brightness is under 50 (of 255) and at least half
+  of its pixels are crushed, blown out when more than 30% of its pixels are blown, and blurry
+  when its sharpest tiles score under 75, checked in that order. Dark and blown-out photos
+  count only when their sharpest tiles also score under 1500, so a night shot with sharp
+  lights or a screenshot of text stays. Rejects leave `people/`, `shots/`, and `categories/`
+  for `rejects/<reason>/`. The thresholds are strict on purpose: a merely soft photo of a
+  friend belongs in their folder, not hidden in `rejects/`. They are the loosest values that
+  flag no photo labeled fine on the dev halves of two labeled sets, so most photos a person
+  would call bad stay in the folders (see [Measuring culling](#measuring-culling)).
+- **The best shot of a burst** is the first by: not a reject; sharpness, where shots at least
+  95% as sharp as the sharpest one count as tied; fewer clipped pixels; more faces (a friend
+  who turned away or stepped out of frame shows fewer); sharper; earlier. Only the best shot
+  goes into `shots/` and `categories/`, and into the `people/` folder of everyone it shows.
+  Someone the best shot leaves out gets their own best shot of the burst in their folder (the
+  best-ranked shot that shows them and is no reject), so no friend loses the moment.
+  `bursts/<first shot>/` shows every shot of each burst, the best one named `best_...`, to
+  pick another by hand.
+- **Closed eyes** are not flagged yet.
+
+`manifest.json` gives each photo's scores (`quality`), its `reject` reason, its `burst`,
+whether it is the burst's best shot (`burst_best`), and its place in the burst's ranking
+(`burst_rank`, 1 for the best). A new threshold needs no pixels: set it in
+`sorted/tripsort.toml` and run `tripsort analyze` and `tripsort export`.
+
+## Videos
+
+With the `video` extra, tripsort looks inside MP4 and MOV videos as it reads them, one at a
+time from a temporary copy that is deleted right after.
+
+- **Frames.** It decodes the first frame, then one every 2 seconds, at most 30 spread evenly
+  over a longer clip, each turned upright and at most 1280 px. Faces and CLIP see each frame
+  as they see a photo.
+- **People.** Faces in frames are matched to the people found in photos, never clustered into
+  new people: a person is in a video when their face is matched in at least 2 of its frames,
+  and the video goes into their `people/` folder. Videos get no shot type.
+- **Categories.** A video's category comes from the average of its frames' CLIP embeddings,
+  with the photos' prompts and threshold. As with photos, a video whose people are the subject
+  is `other`: at least 2 of its frames show a face at least 3% of the frame's height.
+- **Live Photos.** A video next to a photo of the same name in the same folder of a zip
+  (IMG_1234.HEIC with IMG_1234.MOV, ignoring case), and no longer than 5 seconds, is that
+  photo's motion clip. It is not sampled, and it sits next to its still in `all/`, under the
+  still's name, and in no other folder. Without the extra, the length is unknown, so the name
+  alone decides.
+- **Dates.** A video's date comes from Apple's local creation time (with its UTC offset), then
+  from the file name, then from the container's UTC creation time, moved to the photos' most
+  common UTC offset.
+
 ## Dates and file names
 
 Exported files are named `YYYYMMDD_HHMMSS_<zip>_<original-name>` and get the photo's date as
 their modified time. The date comes from EXIF, then from the file name (WhatsApp, WhatsApp
 Desktop, Google Pixel, Samsung, and `IMG_YYYYMMDD_HHMMSS` patterns), then from the zip
-entry's timestamp. A file name with only a date gets `000000` as its time.
+entry's timestamp. A file name with only a date gets `000000` as its time. Videos read with
+the `video` extra also use their creation time (see Videos).
 
 ## Supported files
 
 JPEG, PNG, WebP, and HEIC/HEIF photos. MP4 and MOV videos are deduplicated by content and
-exported, but not analyzed yet (an iPhone Live Photo's MOV appears as its own file for now).
+exported; with the `video` extra, their frames are searched for people and categories too
+(see Videos). A video PyAV cannot decode is still exported, and the summary says so.
 Images larger than Pillow's pixel limit (89 MP after JPEG draft decoding) are exported but
 only checked for exact duplicates. Everything else, and junk such as `__MACOSX/`, hidden
 files, and `Thumbs.db`, is skipped and listed in `manifest.json`. Entries that cannot be read
@@ -277,7 +352,25 @@ category_min_score = 0.30               # a photo's top category needs this shar
 category_face_height = 0.03             # a face this tall (share of the height) makes it other; 0: off
 burst_similarity = 0.92                 # CLIP similarity each shot of a burst needs to its first shot
 burst_window_seconds = 10.0             # the most a burst's shots may come after its first
+reject_max_sharpness = 75.0             # blurry: sharpest tiles under this (0: never)
+reject_max_luma = 50.0                  # dark: mean brightness (0 to 255) under this ...
+reject_min_dark_frac = 0.50             # ... and at least this share of crushed pixels
+reject_min_bright_frac = 0.30           # blown out: more than this share of blown pixels (1: never)
+reject_max_detail = 1500.0              # dark or blown out only with less detail than this
+burst_tie_sharpness = 0.95              # burst shots this close to the sharpest count as tied
 ```
+
+Videos have a table of their own:
+
+```toml
+[video]
+frame_every_seconds = 2.0        # the first frame, then one every this many seconds
+max_frames = 30                  # at most this many per clip, spread evenly over a longer one
+live_photo_max_seconds = 5.0     # a same-name video beside a still is its motion if no longer
+person_min_frames = 2            # a person is in a video when matched in this many frames
+```
+
+A new `frame_every_seconds` or `max_frames` samples every video again on the next ingest.
 
 The people settings live in their own table; the defaults and what each one does are in
 [`default_config.toml`](src/tripsort/default_config.toml):
@@ -318,7 +411,9 @@ CLIP models from GitHub; no photo, face, or name ever leaves your computer.
 - The index (`sorted/.tripsort/index.db`) stores file hashes, EXIF dates, camera make and
   model, GPS coordinates, where each zip was found on disk, every face's position and
   embedding (128 numbers that identify a face), a CLIP embedding per photo (512 numbers that
-  describe what it shows), the names you gave, and the embeddings of your `refs/` photos.
+  describe what it shows), the same for each sampled video frame, sharpness and exposure
+  scores, the names you gave, and the embeddings of your `refs/` photos. No frame image is
+  kept.
   `review/people.html` shows face crops. `tripsort clean sorted/` deletes both; the exported
   folders stay.
 - `manifest.json` has no GPS data, no absolute paths (zips appear by file name only), and no
@@ -333,7 +428,7 @@ The project uses [uv](https://docs.astral.sh/uv/) for everything. Settled design
 logged in [docs/decisions.md](docs/decisions.md).
 
 ```console
-uv sync                              # create .venv with the dev tools
+uv sync --all-extras                 # create .venv with the dev tools and the video extra
 uv run pytest --cov                  # tests with coverage
 uv run ruff check .                  # lint
 uv run ruff format --check .         # formatting
@@ -443,6 +538,41 @@ slightly), and the next photo four seconds after on the same camera, a different
 must not join. `bursts` prints pairwise precision and recall, the burst shots missed, the
 neighbors that joined, and how alike CLIP finds each to the first shot. Generated photos all
 look alike to CLIP, so only real photos (`--from`) say much about precision.
+
+### Measuring culling
+
+```console
+uv run eval/run_eval.py cull-prelabel [--labeled-set DIR] --work WORK   # cull_labels.csv + cull.html
+uv run eval/run_eval.py cull          [--labeled-set DIR] --work WORK [--set thresholds.KEY=VALUE]
+uv run eval/run_eval.py cull-prelabel --labeled-set TRIP --work WORK --review   # a fresh trip
+```
+
+Rejects are rare, so labeling every photo would mostly confirm fine ones. `cull-prelabel`
+picks the lowest-scoring quarter of a labeled set's `dev` photos (the union of the lowest of
+each score: the sharpest tiles, the whole photo's sharpness, the brightness, and the most
+blown-out share) plus a random 50 of the rest, and the `dev` bursts, and writes
+`cull_labels.csv` and `cull.html` next to `labels.csv`. On the page, each photo is fine,
+blurry, too dark, or blown out (keys 1 to 4), and each burst gets the shot you would keep, or
+"any is fine". Nothing is pre-filled, and **Save cull_labels.csv** or Ctrl+S writes the file
+(never the page itself). `cull` prints reject precision (exact, since every flagged photo is
+in the labeled tail), a recall estimate (each photo of the random 50 stands for its share of
+the rest), each reason's counts, and how often the burst pick matches yours. `--review` does
+the same for a trip nobody labeled: every flagged photo, a random 50 of the others, and up
+to 40 bursts.
+
+### Measuring videos
+
+```console
+uv run eval/run_eval.py prelabel --videos --refs REFS --work WORK   # video_labels.csv + video_labels.html
+uv run eval/run_eval.py videos   --refs REFS --work WORK [--split dev|test]
+```
+
+`prelabel --videos` writes a row per video (Live Photo motion clips aside), split by SHA-256
+like the photos and filled with tripsort's guesses (people only when a ref names them), and a
+page showing each video's first, middle, and last sampled frames with their face boxes.
+`videos` scores the people and the category of the checked rows of one split, as `people` and
+`categories` do for photos. Only the people in `REFS` are scored: any other name in a row is
+left out and counted as `labeled_names_without_a_ref`.
 
 ### Releasing
 
