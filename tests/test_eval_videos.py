@@ -24,12 +24,14 @@ def test_videos_are_labeled_and_scored(
 ) -> None:
     flat = tmp_path / "set"
     flat.mkdir()
-    for i in range(5):  # person 1, in enough photos to be a person
-        image = face_photo([(1, 0.3, 0.2, 0.4)], seed=i)
-        (flat / f"kind_p{i}.jpg").write_bytes(
-            jpeg(image, exif=camera_exif(f"2026:07:14 1{i}:00:00"))
-        )
+    for i in range(5):  # persons 1 and 2, each in enough photos to be a person
+        for person in (1, 2):
+            image = face_photo([(person, 0.3, 0.2, 0.4)], seed=10 * person + i)
+            (flat / f"kind_p{person}_{i}.jpg").write_bytes(
+                jpeg(image, exif=camera_exif(f"2026:07:1{person} 1{i}:00:00"))
+            )
     (flat / f"{SECRET}_friend.mp4").write_bytes(clip(5.0, HUES["documents"][0], face=1))
+    (flat / "kind_stranger.mp4").write_bytes(clip(5.0, HUES["documents"][0], face=2))
     (flat / "kind_view.mp4").write_bytes(clip(5.0, HUES["animals"][0]))
     prompts = tmp_path / "prompts.toml"
     prompts.write_text(PROMPTS, encoding="utf-8")
@@ -42,7 +44,8 @@ def test_videos_are_labeled_and_scored(
     code, out = run(capsys, "prelabel", *common, "--videos")
     assert code == 0
     made = json.loads(out)
-    assert (made["videos"], made["videos_without_strip"], made["videos_with_people"]) == (2, 0, 1)
+    assert (made["videos"], made["videos_without_strip"]) == (3, 0)
+    assert (made["videos_with_people"], made["videos_with_named_people"]) == (2, 1)
     assert made["refs"]["named"] == 1  # the refs report reads the index before it closes
     page = (flat / "video_labels.html").read_text(encoding="utf-8")
     assert "Save video_labels.csv" in page
@@ -52,9 +55,12 @@ def test_videos_are_labeled_and_scored(
     friend = next(r for r in rows if SECRET in r["file"])
     assert friend["people"] == "sam"  # tripsort's guess, named by the ref, to check
     assert friend["category"] == "other"
+    stranger = next(r for r in rows if "stranger" in r["file"])
+    assert stranger["people"] == ""  # person 2 has no ref: never pre-filled as person_NN
     for row in rows:  # the labeler: the friend is "sam"; the view is animals, not other
         row["checked"], row["split"] = "y", "dev"
-        row["people"] = "sam" if SECRET in row["file"] else ""
+        # a person_NN left on a row by an older page is not anyone to score
+        row["people"] = "sam;person_07" if SECRET in row["file"] else ""
     with (flat / "video_labels.csv").open("w", encoding="utf-8", newline="") as fp:
         writer = csv.DictWriter(fp, fieldnames=list(labels_module.COLUMNS))
         writer.writeheader()
@@ -63,8 +69,9 @@ def test_videos_are_labeled_and_scored(
     code, out = run(capsys, "videos", *common, "--split", "dev")
     assert code == 0
     report = json.loads(out)
-    assert (report["checked_rows"], report["rows_not_found"]) == (2, 0)
-    assert report["people"]["micro"]["precision"] == 1.0  # person_01 matched to sam
+    assert (report["checked_rows"], report["rows_not_found"]) == (3, 0)
+    assert report["labeled_names_without_a_ref"] == 1  # person_07: counted, not scored
+    assert report["people"]["micro"]["precision"] == 1.0  # the stranger is not scored
     assert report["people"]["micro"]["recall"] == 1.0
     assert report["categories"]["accuracy"] == 1.0
     code, out = run(capsys, "videos", *common, "--split", "test")

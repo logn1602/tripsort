@@ -987,6 +987,9 @@ class VideoGuess:
     media_id: int
     sha256: str
     people: list[str] = field(default_factory=list)  # matched in enough frames
+    # the people in ``people`` with a real name: the video_labels.csv guess, since only
+    # people with a ref are labeled (never a person_NN placeholder)
+    named: list[str] = field(default_factory=list)
     category: str | None = None
     times: list[float] = field(default_factory=list)  # the sampled frames, in seconds
 
@@ -1022,6 +1025,8 @@ def video_predictions(
     ):
         if (guess := guesses.get(int(media_id))) is not None:
             guess.people.append(display_name(int(number), name))
+            if name:
+                guess.named.append(str(name))
     for media_id, label in conn.execute(
         "SELECT media_id, label FROM categories WHERE is_primary = 1"
     ):
@@ -1111,7 +1116,7 @@ def video_prelabel(
                     file=key,
                     split=split_for(guess.sha256),
                     checked=False,
-                    people=sorted(guess.people),
+                    people=sorted(guess.named),
                     shot="none",
                     selfie=False,
                     category=guess.category or OTHER_CATEGORY,
@@ -1155,6 +1160,7 @@ def video_prelabel(
         "label_problems": len(problems),
         "videos_without_strip": sum(1 for c in cards if c.thumb is None),
         "videos_with_people": sum(bool(g.people) for g in guesses.values()),
+        "videos_with_named_people": sum(bool(g.named) for g in guesses.values()),
         "video_labels_csv": state,
         "video_labels_html": "written",
         **refs_report,
@@ -1164,7 +1170,9 @@ def video_prelabel(
 def evaluate_videos(
     root: Path, work: Path, refs: Path | None, split: str, overrides: dict[str, str]
 ) -> dict[str, Any]:
-    """People and categories of the checked videos of ``split`` against video_labels.csv."""
+    """People and categories of the checked videos of ``split`` against video_labels.csv.
+    With refs, only the people with a ref are scored: any other name in the rows (such as a
+    person_NN placeholder an earlier page pre-filled) is counted and left out."""
     rows, problems = read_rows(root / VIDEO_LABELS_CSV)
     if problems:
         return {"label_problems": len(problems), "first_problems": problems[:20]}
@@ -1173,10 +1181,20 @@ def evaluate_videos(
         files, guesses = video_predictions(project, sources)
         refs_report = _refs_report(project, refs, named)
     checked = [r for r in rows if r.checked]
-    everyone: Counter[str] = Counter(person_key(n) for r in checked for n in r.people)
-    if named is not None:
-        for name in named.names:
-            everyone.setdefault(person_key(name), 0)
+    ref_keys = {person_key(name) for name in named.names} if named is not None else None
+
+    def labeled(names: list[str]) -> set[str]:
+        keys = {person_key(n) for n in names}
+        return keys if ref_keys is None else keys & ref_keys
+
+    everyone: Counter[str] = Counter(key for r in checked for key in labeled(r.people))
+    for key in ref_keys or ():
+        everyone.setdefault(key, 0)
+    without_ref = (
+        len({person_key(n) for r in checked for n in r.people} - ref_keys)
+        if ref_keys is not None
+        else None
+    )
     photos, pairs, not_found = [], [], 0
     for row in checked:
         if row.split != split:
@@ -1187,7 +1205,7 @@ def evaluate_videos(
             continue
         photos.append(
             Photo(
-                labeled={person_key(n) for n in row.people},
+                labeled=labeled(row.people),
                 predicted={person_key(n) for n in guess.people},
                 shot="none",
                 predicted_shot="none",
@@ -1203,6 +1221,7 @@ def evaluate_videos(
         "split": split,
         "checked_rows": sum(r.split == split for r in checked),
         "rows_not_found": not_found,
+        "labeled_names_without_a_ref": without_ref,
         "people": {key: people[key] for key in ("micro", "macro", "per_person") if key in people},
         "categories": category_report(pairs, list(CATEGORIES)),
         **refs_report,
