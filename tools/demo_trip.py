@@ -298,7 +298,7 @@ def trip() -> list[Photo]:
             burst="sunset",
             seconds_after_previous=1,
         ),
-        # A photo of a thing, which tripsort puts in animals: the public sample's known miss.
+        # A photo of a thing, which tripsort puts in animals: the public sample's known miss (#22).
         Photo("road_bike", pearl, _plain("categories/other/road_bike.jpg"), known_miss="animals"),
     ]
 

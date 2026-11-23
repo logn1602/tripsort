@@ -132,8 +132,9 @@ the folders before you share them. These are the weak spots, most with an open i
   ([#14](https://github.com/logn1602/tripsort/issues/14)), and animals can land in `other`,
   mostly when the detector finds a face in them
   ([#15](https://github.com/logn1602/tripsort/issues/15)). The other way round, a photo of a
-  thing can land in `animals/`, as the road bike in the demo does. A view with friends in front
-  of it goes to `other` on purpose. Category prompts work in English only.
+  thing can land in `animals/`, as the road bike in the demo does
+  ([#22](https://github.com/logn1602/tripsort/issues/22)). A view with friends in front of it
+  goes to `other` on purpose. Category prompts work in English only.
 - **Rejects are only suggestions.** On a fresh trip, half the photos flagged were fine, so
   they stay in every folder ([#18](https://github.com/logn1602/tripsort/issues/18)).
 - **The best shot of a burst** matched the shot a person preferred 14 times in 28, about

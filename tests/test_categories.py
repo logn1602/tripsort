@@ -348,7 +348,7 @@ VERSIONS = ("photo", "mirrored", "cropped", "darker")
 
 # Calls the default prompts get wrong by a clear margin: non-strict xfails, so a fix makes
 # them pass, not fail. None since `other` got prompts for things (docs/decisions.md): the road
-# bike still lands in animals, but as a close call.
+# bike still lands in animals, but as a close call (#22).
 KNOWN_MISSES: dict[tuple[str, str], str] = {}
 
 # A call is judged strictly only when it is clear: moving the photo to another category would
