@@ -37,6 +37,12 @@ def test_float_setting_accepts_an_integer(tmp_path: Path) -> None:
     assert load_config(folder).thresholds.copy_max_aspect_diff == 0.0
 
 
+def test_video_people_are_off_unless_turned_on(tmp_path: Path) -> None:
+    assert load_config().video.match_people is False
+    folder = write_override(tmp_path, "[video]\nmatch_people = true\n")
+    assert load_config(folder).video.match_people is True
+
+
 def test_hash_is_stable() -> None:
     assert load_config().hash == load_config().hash
     assert len(load_config().hash) == 64
@@ -70,6 +76,8 @@ def test_hash_is_stable() -> None:
         ("[people]\nmin_face_score = 0.4\n", "must be between 0.5 and 1.0"),
         ("[people]\nref_min_similarity = 1.5\n", "must be between"),
         ("[people]\nsuggest_min_similarity = -2\n", "must be between -1.0 and 1.0"),
+        ("[video]\nmatch_people = 1\n", "must be true or false"),
+        ('[video]\nmatch_people = "yes"\n', "must be true or false"),
     ],
 )
 def test_invalid_project_file(tmp_path: Path, text: str, message: str) -> None:

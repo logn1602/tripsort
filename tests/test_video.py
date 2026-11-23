@@ -7,6 +7,7 @@ the tests that need one skip without PyAV.
 import io
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -223,23 +224,39 @@ def test_videos_get_people_and_categories_from_their_frames(
             ("friend.mp4", clip(5.0, HUES["documents"][0], face=1)),  # person 1 in every frame
         ],
     )
-    with Project.open(configured(tmp_path)) as project:
+
+    def friend_entry(out: Path) -> dict[str, Any]:
+        manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+        return next(f for f in manifest["files"] if f["occurrences"][0]["member"] == "friend.mp4")
+
+    folder = configured(tmp_path)
+    with Project.open(folder) as project:
         ingested = project.ingest([trip])
         assert (ingested.videos.sampled, ingested.videos.frames) == (2, 6)
         assert "Sampled 2 videos (6 frames) for faces and CLIP." in ingested.summary()
         analyzed = project.analyze()
         assert analyzed.categories.videos["animals"] == 1
         assert analyzed.categories.videos["other"] == 1  # the friend's face fills the frame
-        assert analyzed.videos_with_people == 1
+        assert analyzed.videos_with_people == 0  # video people are off by default
         assert "Sorted 2 videos by category: 1 animals; 1 other." in analyzed.summary()
-        assert [p.videos for p in project.people.all() if p.photos] == [1]
+        assert [p.videos for p in project.people.all() if p.photos] == [0]
         project.export()
-        out = project.folder
-        (person,) = (p for p in (out / "people").iterdir() if "p0.jpg" in names(p))
-        assert names(person) == {"p0.jpg", "p1.jpg", "p2.jpg", "p3.jpg", "p4.jpg", "friend.mp4"}
-        assert "view.mp4" in names(out / "categories" / "animals")
-        manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
-        friend = next(f for f in manifest["files"] if f["occurrences"][0]["member"] == "friend.mp4")
-        assert friend["people"] == [person.name]
+        (person,) = (p for p in (folder / "people").iterdir() if "p0.jpg" in names(p))
+        assert "friend.mp4" not in names(person)  # in all/ only, not in the friend's folder
+        assert "friend.mp4" in names(folder / "all")
+        assert "view.mp4" in names(folder / "categories" / "animals")
+        friend = friend_entry(folder)
+        assert friend["people"] == []
         assert (friend["category"], friend["frames"]) == ("other", 3)
         assert friend["duration_s"] == pytest.approx(5.0, abs=0.25)
+
+    with (folder / "tripsort.toml").open("a", encoding="utf-8") as fp:
+        fp.write("[video]\nmatch_people = true\n")  # turned on: no pixels are read again
+    with Project.open(folder) as project:
+        analyzed = project.analyze()
+        assert analyzed.videos_with_people == 1
+        assert [p.videos for p in project.people.all() if p.photos] == [1]
+        project.export()
+        (person,) = (p for p in (folder / "people").iterdir() if "p0.jpg" in names(p))
+        assert names(person) == {"p0.jpg", "p1.jpg", "p2.jpg", "p3.jpg", "p4.jpg", "friend.mp4"}
+        assert friend_entry(folder)["people"] == [person.name]

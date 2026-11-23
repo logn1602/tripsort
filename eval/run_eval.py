@@ -1092,13 +1092,19 @@ def _video_strip(project: Project, guess: VideoGuess) -> tuple[str | None, list[
     return thumb_uri(strip), boxes
 
 
+def _matching(overrides: dict[str, str]) -> dict[str, str]:
+    """The overrides, with video people matched: off by default in tripsort, but what the
+    video labels measure. An explicit video.match_people in the overrides wins."""
+    return {"video.match_people": "true", **overrides}
+
+
 def video_prelabel(
     root: Path, work: Path, refs: Path | None, overrides: dict[str, str]
 ) -> dict[str, Any]:
     """video_labels.csv (unless it exists) and video_labels.html: one row per sampled video
     (Live Photo motion clips are not videos here), split by SHA-256 like the photos, starting
     from tripsort's guesses of its people and category."""
-    project, sources, named = people_project(root, work, refs, overrides)
+    project, sources, named = people_project(root, work, refs, _matching(overrides))
     with project:
         files, guesses = video_predictions(project, sources)
         first_key: dict[int, str] = {}
@@ -1176,7 +1182,7 @@ def evaluate_videos(
     rows, problems = read_rows(root / VIDEO_LABELS_CSV)
     if problems:
         return {"label_problems": len(problems), "first_problems": problems[:20]}
-    project, sources, named = people_project(root, work, refs, overrides)
+    project, sources, named = people_project(root, work, refs, _matching(overrides))
     with project:
         files, guesses = video_predictions(project, sources)
         refs_report = _refs_report(project, refs, named)

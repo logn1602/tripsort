@@ -110,6 +110,7 @@ class VideoSettings:
     max_frames: int
     live_photo_max_seconds: float
     person_min_frames: int
+    match_people: bool  # off: videos get no people, so they stay out of people/
 
 
 @dataclass(frozen=True)
@@ -198,7 +199,11 @@ def _check_value(where: str, key: str, value: Any, default: Any) -> None:
             allowed = ", ".join(f'"{c}"' for c in choices)
             raise ConfigError(f"{where} must be one of {allowed}, got {value!r}")
         return
-    if isinstance(default, bool) or isinstance(value, bool):
+    if isinstance(default, bool):
+        if not isinstance(value, bool):
+            raise ConfigError(f"{where} must be true or false, got {value!r}")
+        return
+    if isinstance(value, bool):
         raise ConfigError(f"{where} must be a number")
     if isinstance(default, int) and not isinstance(value, int):
         raise ConfigError(f"{where} must be a whole number, got {value!r}")

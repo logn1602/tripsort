@@ -1873,6 +1873,59 @@
         "reject_min_dark_frac": 0.5
       },
       "tripsort_version": "0.3.0"
+    },
+    "private_cull_review": {
+      "burst_agreement": 0.825,
+      "bursts_any": 25,
+      "bursts_labeled": 40,
+      "dev_photos": 880,
+      "dev_rejects": {
+        "blown_out": 5,
+        "blurry": 10,
+        "dark": 11
+      },
+      "flagged_labeled": 26,
+      "flagged_not_labeled": 0,
+      "labels": {
+        "blurry": 9,
+        "dark": 6,
+        "ok": 61
+      },
+      "labels_weighted": {
+        "blown_out": 0,
+        "blurry": 9.0,
+        "dark": 38.2,
+        "ok": 832.8
+      },
+      "per_reason": {
+        "blown_out": {
+          "flagged": 5,
+          "labeled_bad": 1,
+          "labeled_this_reason": 0
+        },
+        "blurry": {
+          "flagged": 10,
+          "labeled_bad": 4,
+          "labeled_this_reason": 3
+        },
+        "dark": {
+          "flagged": 11,
+          "labeled_bad": 8,
+          "labeled_this_reason": 3
+        }
+      },
+      "photos_labeled": 76,
+      "precision": 0.5,
+      "recall_estimate": 0.2757,
+      "settings": {
+        "burst_tie_sharpness": 0.95,
+        "reject_max_detail": 1500.0,
+        "reject_max_luma": 50.0,
+        "reject_max_sharpness": 75.0,
+        "reject_min_bright_frac": 0.3,
+        "reject_min_dark_frac": 0.5
+      },
+      "tripsort_version": "0.3.0"
     }
   },
   "dedupe": {

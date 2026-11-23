@@ -20,8 +20,8 @@ After a group trip, everyone has a zip of photos from their own phone. tripsort 
 - groups bursts, several shots of one moment, and puts the best shot in the folders, plus each
   friend's own best shot of the moment when the best one leaves them out;
 - sets clearly blurry, dark, and blown-out photos aside for review, without deleting anything;
-- finds friends in videos and sorts videos into categories (with the `video` extra), and keeps
-  each Live Photo's motion clip next to its still;
+- sorts videos into categories (with the `video` extra; finding friends in videos is there to
+  try, but off by default), and keeps each Live Photo's motion clip next to its still;
 - exports plain folders plus a `manifest.json`, and never modifies the input zips.
 
 Planned for later releases:
@@ -40,9 +40,9 @@ pip install tripsort
 
 Or run it without installing, with uv: `uvx tripsort --version`.
 
-To look inside videos as well (people, categories, Live Photo lengths, and dates), add the
-`video` extra, which brings [PyAV](https://github.com/PyAV-Org/PyAV) and the FFmpeg its
-wheels bundle:
+To look inside videos as well (categories, Live Photo lengths, dates, and people if turned
+on), add the `video` extra, which brings [PyAV](https://github.com/PyAV-Org/PyAV) and the
+FFmpeg its wheels bundle:
 
 ```console
 pip install "tripsort[video]"
@@ -289,9 +289,13 @@ time from a temporary copy that is deleted right after.
 - **Frames.** It decodes the first frame, then one every 2 seconds, at most 30 spread evenly
   over a longer clip, each turned upright and at most 1280 px. Faces and CLIP see each frame
   as they see a photo.
-- **People.** Faces in frames are matched to the people found in photos, never clustered into
-  new people: a person is in a video when their face is matched in at least 2 of its frames,
-  and the video goes into their `people/` folder. Videos get no shot type.
+- **People, off by default.** With `[video] match_people = true`, faces in frames are matched
+  to the people found in photos, never clustered into new people: a person is in a video when
+  their face is matched in at least 2 of its frames, and the video goes into their `people/`
+  folder. On a labeled trip's held-out videos this found only 17% of the people in them, at
+  94% precision, so videos stay in `all/` and `categories/` and out of `people/` until it
+  gets better ([#17](https://github.com/logn1602/tripsort/issues/17)). Turning it on later
+  reads no pixels: run `tripsort analyze` and `tripsort export`. Videos get no shot type.
 - **Categories.** A video's category comes from the average of its frames' CLIP embeddings,
   with the photos' prompts and threshold. As with photos, a video whose people are the subject
   is `other`: at least 2 of its frames show a face at least 3% of the frame's height.
@@ -315,7 +319,7 @@ the `video` extra also use their creation time (see Videos).
 ## Supported files
 
 JPEG, PNG, WebP, and HEIC/HEIF photos. MP4 and MOV videos are deduplicated by content and
-exported; with the `video` extra, their frames are searched for people and categories too
+exported; with the `video` extra, their frames are searched for faces and categories too
 (see Videos). A video PyAV cannot decode is still exported, and the summary says so.
 Images larger than Pillow's pixel limit (89 MP after JPEG draft decoding) are exported but
 only checked for exact duplicates. Everything else, and junk such as `__MACOSX/`, hidden
@@ -368,6 +372,7 @@ frame_every_seconds = 2.0        # the first frame, then one every this many sec
 max_frames = 30                  # at most this many per clip, spread evenly over a longer one
 live_photo_max_seconds = 5.0     # a same-name video beside a still is its motion if no longer
 person_min_frames = 2            # a person is in a video when matched in this many frames
+match_people = false             # put videos in people/ (off: too few found yet, #17)
 ```
 
 A new `frame_every_seconds` or `max_frames` samples every video again on the next ingest.

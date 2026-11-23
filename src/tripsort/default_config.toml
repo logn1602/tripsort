@@ -57,6 +57,7 @@ frame_every_seconds = 2.0          # the first frame, then one every this many s
 max_frames = 30                    # at most this many per clip, spread evenly over a longer one
 live_photo_max_seconds = 5.0       # a video named like a still beside it is that Live Photo's motion if no longer
 person_min_frames = 2              # a person is in a video when matched in at least this many frames
+match_people = false               # match faces in videos to people, for people/ (off: too few found yet, issue #17)
 
 [categories]
 # Each [categories.<name>] table is a category, sorted into categories/<name>/. A photo's
