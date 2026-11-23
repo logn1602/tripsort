@@ -61,3 +61,10 @@ The face-model tests use three public-domain portrait paintings, and the categor
 public-domain or CC0 photos, scans, and screenshots with no people in them (scenery, animals,
 food, documents, and photos that fit none of these); their sources and licenses are listed in
 `tests/fixtures/README.md`.
+
+## The demo GIF
+
+`docs/demo.gif`, the demo in the README, is drawn by `tools/make_demo_gif.py` from those
+fixtures only: the three paintings, pasted in front of the category photos for some shots, and
+the category photos themselves (all 25 of them, with the lion blurred). Like the
+fixtures, it shows no real person's photo.

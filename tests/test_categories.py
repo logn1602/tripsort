@@ -303,9 +303,7 @@ def test_bursts_end_to_end(tmp_path: Path, color_clip: ColorImageEncoder) -> Non
         project.ingest([trip])
         analyzed = project.analyze()
         assert (analyzed.bursts.bursts, analyzed.bursts.photos) == (1, 3)
-        assert "Found 1 burst (3 photos); the best shot of each goes to the people" in (
-            analyzed.summary()
-        )
+        assert "Found 1 burst (3 photos); the best shot goes to the people" in analyzed.summary()
         project.export()
         assert len(list((project.folder / "all").iterdir())) == 6
         manifest = json.loads((project.folder / "manifest.json").read_text(encoding="utf-8"))
@@ -350,7 +348,7 @@ VERSIONS = ("photo", "mirrored", "cropped", "darker")
 
 # Calls the default prompts get wrong by a clear margin: non-strict xfails, so a fix makes
 # them pass, not fail. None since `other` got prompts for things (docs/decisions.md): the road
-# bike still lands in animals, but as a close call.
+# bike still lands in animals, but as a close call (#22).
 KNOWN_MISSES: dict[tuple[str, str], str] = {}
 
 # A call is judged strictly only when it is clear: moving the photo to another category would

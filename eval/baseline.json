@@ -39,6 +39,45 @@
       },
       "tripsort_version": "0.1.0"
     },
+    "gate_generated": {
+      "burst_shots_missed": 0,
+      "clip_model": "clip-image-int8-vit-b-32-openai-2/center224-v1",
+      "moments": 39,
+      "neighbors_joined": 19,
+      "pairs": {
+        "precision": 0.5128,
+        "recall": 1.0
+      },
+      "seconds": 10.7,
+      "settings": {
+        "burst_similarity": 0.92,
+        "burst_window_seconds": 10.0
+      },
+      "shots": 79,
+      "similarity_to_first_shot": {
+        "burst_shots": {
+          "0.80-0.85": 0,
+          "0.85-0.90": 0,
+          "0.90-0.92": 0,
+          "0.92-0.94": 0,
+          "0.94-0.96": 0,
+          "0.96-0.98": 0,
+          "<0.80": 0,
+          ">=0.98": 40
+        },
+        "neighbors": {
+          "0.80-0.85": 0,
+          "0.85-0.90": 0,
+          "0.90-0.92": 0,
+          "0.92-0.94": 0,
+          "0.94-0.96": 0,
+          "0.96-0.98": 4,
+          "<0.80": 0,
+          ">=0.98": 15
+        }
+      },
+      "tripsort_version": "0.4.0"
+    },
     "generated": {
       "burst_shots_missed": 0,
       "clip_model": "clip-image-int8-vit-b-32-openai-2/center224-v1",
@@ -1765,7 +1804,7 @@
       "photos": 25,
       "scored": 25,
       "seconds": 2.1,
-      "tripsort_version": "0.1.0"
+      "tripsort_version": "0.4.0"
     }
   },
   "cull": {
@@ -1929,6 +1968,114 @@
     }
   },
   "dedupe": {
+    "gate_generated": {
+      "copies": 123,
+      "copies_left_in_all_by_variant": {
+        "heic_to_jpeg": 0.0,
+        "recompress": 0.0,
+        "storage_saver": 0.0,
+        "telegram": 0.0,
+        "whatsapp": 0.0,
+        "whatsapp_hd": 0.0
+      },
+      "copy_distance_histogram": {
+        "0": 108,
+        "2": 15
+      },
+      "dedupe": {
+        "copies": 123,
+        "copies_left_in_all": 0,
+        "left_out": 147,
+        "precision": 0.8367,
+        "recall": 1.0,
+        "wrongly_left_out": 24
+      },
+      "dedupe_if_source_merges_are_real_copies": {
+        "copies": 123,
+        "copies_left_in_all": 0,
+        "left_out": 147,
+        "precision": 0.8367,
+        "recall": 1.0,
+        "wrongly_left_out": 24
+      },
+      "grouping": {
+        "grouped_with_another_photo_by_family": {
+          "burst_exif": 0.25,
+          "burst_no_exif": 1.0,
+          "burst_same_second": 1.0,
+          "burst_same_second_exposure_differs": 0.1875,
+          "document": 0.0
+        },
+        "grouped_with_own_original_by_variant": {
+          "heic_to_jpeg": 1.0,
+          "recompress": 1.0,
+          "storage_saver": 1.0,
+          "telegram": 0.8333,
+          "whatsapp": 0.875,
+          "whatsapp_hd": 0.875
+        },
+        "pairwise": {
+          "f1": 0.8782,
+          "precision": 0.8439,
+          "recall": 0.9153
+        }
+      },
+      "ingest_and_analyze_seconds": 25.1,
+      "items": 215,
+      "keeper_accuracy": 1.0,
+      "negative_pair_distance_histogram": {
+        "burst_exif": {
+          "0": 6,
+          "2": 2
+        },
+        "burst_no_exif": {
+          "0": 4,
+          "2": 4
+        },
+        "burst_same_second": {
+          "0": 7,
+          "2": 1
+        },
+        "burst_same_second_exposure_differs": {
+          "0": 8
+        },
+        "document": {
+          "12": 1,
+          ">12": 1
+        }
+      },
+      "negatives": 68,
+      "not_hashed": 0,
+      "originals": 24,
+      "source_photo_merges": 0,
+      "thresholds": {
+        "burst_similarity": 0.92,
+        "burst_tie_sharpness": 0.95,
+        "burst_window_seconds": 10.0,
+        "category_face_height": 0.03,
+        "category_min_score": 0.3,
+        "copy_max_aspect_diff": 0.02,
+        "hide_rejects": false,
+        "phash_max_distance": 6,
+        "phash_max_distance_both_exif": 2,
+        "phash_max_distance_both_exif_resized": 4,
+        "reject_max_detail": 1500.0,
+        "reject_max_luma": 50.0,
+        "reject_max_sharpness": 75.0,
+        "reject_min_bright_frac": 0.3,
+        "reject_min_dark_frac": 0.5
+      },
+      "tripsort_version": "0.4.0",
+      "unique_files": 215,
+      "wrongly_left_out_by_family": {
+        "burst_exif": 0.0,
+        "burst_no_exif": 1.0,
+        "burst_same_second": 0.5,
+        "burst_same_second_exposure_differs": 0.0,
+        "document": 0.0,
+        "original": 0.0
+      }
+    },
     "generated_150_photos_12mp": {
       "copies": 771,
       "copies_left_in_all_by_variant": {

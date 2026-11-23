@@ -11,6 +11,8 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ["--maxkb=500"]
+        # The README's demo, drawn from public-domain and CC0 images by tools/make_demo_gif.py.
+        exclude: ^docs/demo\.gif$
 
   - repo: local
     hooks:

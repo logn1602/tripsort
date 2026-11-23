@@ -82,3 +82,10 @@ cropped, and a darkened copy of it, through CLIP, should land in its folder's ca
 (`other` for `other/`). Only clear calls are judged strictly. Close calls and the known misses
 (see `docs/decisions.md`) are non-strict xfails, so a small difference in ONNX Runtime's math
 on another CPU does not fail the tests.
+
+## The demo trip
+
+`tools/demo_trip.py` builds the demo trip of the README and of the fresh-install CI job from
+these files alone: the paintings play three friends (as they are, mirrored, pasted in front of
+category photos, and side by side), and the category photos make up the rest of the trip.
+`tools/make_demo_gif.py` draws `docs/demo.gif` from a run of it.

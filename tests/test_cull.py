@@ -15,11 +15,13 @@ from fake_clip import HUES, ColorImageEncoder, WordTextEncoder
 from fake_faces import MarkerFaceAnalyzer, face_photo
 from PIL import Image, ImageFilter
 
-from tripsort.api import Project
+from tripsort.api import Project, _category_lines
+from tripsort.clip.bursts import BurstStats
+from tripsort.clip.categorize import CategoryStats
 from tripsort.config import load_config
-from tripsort.cull.analysis import _Scores, best_shot, rank_shots, reject_reason
+from tripsort.cull.analysis import CullStats, _Scores, best_shot, rank_shots, reject_reason
 from tripsort.cull.quality import measure
-from tripsort.export.writer import _Burst, _own_best_shots
+from tripsort.export.writer import ExportResult, _Burst, _own_best_shots
 
 # the fake CLIP puts a photo on its color's axis, and these prompts name the axes
 FAKE_CATEGORIES = """
@@ -93,6 +95,50 @@ def test_reject_rules_are_strict_and_say_why() -> None:
     assert reject_reason(white, t) == "blown_out"
     screenshot = scores(sharp_tiles=3000.0, luma_mean=235.0, bright_frac=0.9)  # text on white
     assert reject_reason(screenshot, t) is None
+
+
+def test_the_summary_speaks_of_one_reject_and_one_burst_in_the_singular() -> None:
+    def lines(rejects: dict[str, int], bursts: int, hidden: bool = False) -> str:
+        culling = CullStats(rejects=rejects, hidden=hidden)
+        return "\n".join(_category_lines(CategoryStats(), BurstStats(bursts, 3 * bursts), culling))
+
+    one = lines({"blurry": 1}, 1)
+    assert "1 photo flagged as a reject (1 blurry): rejects/ lists it to check, and it stays" in one
+    assert "Found 1 burst (3 photos); the best shot goes to the people" in one
+    hidden = lines({"blurry": 1}, 0, hidden=True)
+    assert "1 photo flagged as a reject (1 blurry): it stays in all/ and goes to rejects/" in hidden
+    two = lines({"dark": 1, "blurry": 1}, 2)
+    assert "2 photos flagged as rejects (1 dark, 1 blurry): rejects/ lists them" in two
+    assert "they stay in their folders" in two
+    assert "Found 2 bursts (6 photos); the best shot of each goes" in two
+
+
+def test_the_export_summary_speaks_of_one_reject_in_the_singular() -> None:
+    def summary(rejects: dict[str, int]) -> str:
+        result = ExportResult(
+            dry_run=False,
+            planned=0,
+            written=0,
+            unchanged=0,
+            removed=0,
+            linked=0,
+            link_fallbacks=0,
+            bytes_written=0,
+            kept=0,
+            unreadable=0,
+            near_copies=0,
+            duplicates_exported=False,
+            left_alone=0,
+            problems=[],
+            seconds=0.0,
+            rejects=rejects,
+        )
+        return result.summary()
+
+    one = summary({"blurry": 1})
+    assert "rejects/ lists 1 file (1 blurry) to check; it stays in people/" in one
+    two = summary({"dark": 1, "blurry": 1})
+    assert "rejects/ lists 2 files (1 dark, 1 blurry) to check; they stay in people/" in two
 
 
 @pytest.mark.cull
