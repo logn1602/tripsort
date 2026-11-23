@@ -21,6 +21,7 @@ import numpy as np
 import numpy.typing as npt
 from PIL import Image
 
+from tripsort.commands import command
 from tripsort.faces.names import display_name
 from tripsort.faces.suggest import Suggestion, commands
 from tripsort.faces.types import EMBEDDING_SIZE, FACE_MODEL_ID
@@ -304,6 +305,11 @@ figcaption { font-size: 11px; color: var(--muted); }
 """
 
 
+def _command(subcommand: str) -> str:
+    """A command for the page's text, spelled the way tripsort was run."""
+    return html.escape(command(subcommand))
+
+
 def _page(sections: list[_Section], crops: dict[int, str], names: dict[int, str]) -> str:
     parts = [
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
@@ -312,9 +318,10 @@ def _page(sections: list[_Section], crops: dict[int, str], names: dict[int, str]
         "<h1>People review</h1>",
         "<p>Each row runs from the faces most like the person to the least alike. Dashed: "
         "matched in the background. Blue: joined the person after clustering. Fix a person "
-        "split in two with <code>tripsort people merge</code>, keep two people apart with "
-        "<code>tripsort people dismiss</code>, and name people with "
-        "<code>tripsort people rename</code>. This page shows faces: keep it private.</p>",
+        f"split in two with <code>{_command('people merge')}</code>, keep two people apart "
+        f"with <code>{_command('people dismiss')}</code>, and name people with "
+        f"<code>{_command('people rename')}</code>. This page shows faces: keep it "
+        "private.</p>",
     ]
     for section in sections:
         h = f"h{section.level}"

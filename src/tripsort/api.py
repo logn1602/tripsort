@@ -10,8 +10,11 @@ with Project.open("sorted/") as proj:          # creates sorted/.tripsort/index.
     proj.people.suggestions()                  # unnamed people who may be someone named
     proj.people.merge("person_07", into="alex")
     proj.people.dismiss("person_09", "alex")   # not alex: stop suggesting it
-    result = proj.export(hardlinks=True)       # all/, people/, shots/, manifest.json
+    result = proj.export()                     # all/, people/, shots/, manifest.json
     print(result.summary())
+
+``export(hardlinks=False)`` makes copies and ``export(export_duplicates=True)`` adds
+duplicates/; both stick, so a later ``export()`` keeps them until told otherwise.
 """
 
 import json
@@ -21,7 +24,7 @@ import sqlite3
 import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
@@ -33,12 +36,13 @@ from tripsort.clip.bursts import BurstStats
 from tripsort.clip.categorize import CategoryStats
 from tripsort.clip.store import pending_clip_scans
 from tripsort.clip.types import CLIP_MODEL_ID, ImageEncoder, TextEncoder
+from tripsort.commands import command
 from tripsort.config import OTHER, Config, load_config
 from tripsort.cull.analysis import CullStats
 from tripsort.dedupe.copies import rebuild_copy_groups
 from tripsort.errors import ModelError, UserError, ZipError
 from tripsort.export.manifest import write_manifest
-from tripsort.export.writer import ExportResult, export_files
+from tripsort.export.writer import ExportChoices, ExportResult, export_files, written_choices
 from tripsort.faces.analysis import PeopleStats
 from tripsort.faces.people import People, PersonInfo, RefsResult
 from tripsort.faces.review import REVIEW_DIR
@@ -60,6 +64,7 @@ from tripsort.stats import ProjectStats, count, human_bytes, project_stats
 
 __all__ = [
     "AnalyzeResult",
+    "ExportChoices",
     "ExportResult",
     "IngestResult",
     "People",
@@ -74,6 +79,8 @@ __all__ = [
 
 # bumped by rename, merge, and dismiss, so the next export re-analyzes
 PEOPLE_EDITS_KEY = "people_edits"
+# the last export's ExportChoices, as JSON: the next export keeps them
+EXPORT_CHOICES_KEY = "export_choices"
 SUMMARY_SUGGESTIONS = 5  # merge suggestions in a summary; `people list` shows them all
 
 
@@ -122,7 +129,7 @@ class AnalyzeResult:
                 f"{count(s.read_failures, 'zip entry', 'zip entries')} could not be read "
                 "(see the messages above and manifest.json)."
             )
-        lines.extend(_category_lines(self.categories, self.bursts, self.culling))
+        lines.extend(_category_lines(self.categories, self.bursts, self.culling, project))
         if self.live_photos:
             lines.append(
                 f"Paired {count(self.live_photos, 'Live Photo')}: each motion clip goes next to "
@@ -132,7 +139,7 @@ class AnalyzeResult:
         return "\n".join(lines)
 
 
-def _category_lines(c: CategoryStats, b: BurstStats, q: CullStats) -> list[str]:
+def _category_lines(c: CategoryStats, b: BurstStats, q: CullStats, project: str) -> list[str]:
     lines = []
     if c.problem:
         lines.append(f"Categories were not scored: {c.problem}")
@@ -152,7 +159,7 @@ def _category_lines(c: CategoryStats, b: BurstStats, q: CullStats) -> list[str]:
     if c.not_embedded:
         lines.append(
             f"{count(c.not_embedded, 'photo')} without a CLIP embedding yet "
-            "(no category, no burst); `tripsort ingest` on this project embeds them."
+            f"(no category, no burst); `{command('ingest', project)}` embeds them."
         )
     if b.bursts:
         lines.append(
@@ -182,7 +189,7 @@ def _category_lines(c: CategoryStats, b: BurstStats, q: CullStats) -> list[str]:
     if q.not_scored:
         lines.append(
             f"{count(q.not_scored, 'photo')} without sharpness and exposure scores yet; "
-            "`tripsort ingest` on this project scores them."
+            f"`{command('ingest', project)}` scores them."
         )
     return lines
 
@@ -199,12 +206,12 @@ def _people_lines(p: PeopleStats, project: str) -> list[str]:
     if p.unassigned:
         lines.append(
             f"{count(p.unassigned, 'foreground face')} matched nobody: strangers, or someone "
-            "to merge (see `tripsort people review`)."
+            f"to merge (see `{command('people review', project)}`)."
         )
     for group in p.joined:
         lines.append(
             f"The clustering put {' and '.join(group)} together; they were kept apart as you "
-            "named them, but check `tripsort people review`."
+            f"named them, but check `{command('people review', project)}`."
         )
     if p.refs_unmatched:
         lines.append(f"No one looks enough like the refs/ photos of {', '.join(p.refs_unmatched)}.")
@@ -212,7 +219,7 @@ def _people_lines(p: PeopleStats, project: str) -> list[str]:
     if p.not_scanned:
         lines.append(
             f"{count(p.not_scanned, 'photo')} not scanned for faces yet; "
-            "`tripsort ingest` on this project scans them."
+            f"`{command('ingest', project)}` scans them."
         )
     return lines
 
@@ -371,24 +378,40 @@ class Project:
     def export(
         self,
         *,
-        hardlinks: bool = True,
+        hardlinks: bool | None = None,
         dry_run: bool = False,
-        export_duplicates: bool = False,
+        export_duplicates: bool | None = None,
         progress: Progress | None = None,
     ) -> ExportResult:
         """Stage 6: write all/, unreadable/, optionally duplicates/, and manifest.json.
 
-        Runs ``analyze`` first when the index changed since the last analysis.
+        ``hardlinks`` (False: copies) and ``export_duplicates`` stick: left out, they are
+        the last export's (hardlinks without duplicates/ before the first), and an export
+        that is not a dry run saves the ones it used. Runs ``analyze`` first when the index
+        changed since the last analysis.
         """
+        last = self.export_choices() or ExportChoices()
+        choices = ExportChoices(
+            hardlinks=last.hardlinks if hardlinks is None else hardlinks,
+            export_duplicates=(
+                last.export_duplicates if export_duplicates is None else export_duplicates
+            ),
+        )
+        given = {"hardlinks": hardlinks, "export_duplicates": export_duplicates}
+        kept = tuple(
+            name
+            for name, value in given.items()
+            if value is None and getattr(choices, name) != getattr(ExportChoices(), name)
+        )
         if self.analysis_is_stale():
             self.analyze()
         with self._run("export") as run:
             result = export_files(
                 self._conn,
                 self.folder,
-                hardlinks=hardlinks,
+                hardlinks=choices.hardlinks,
                 dry_run=dry_run,
-                export_duplicates=export_duplicates,
+                export_duplicates=choices.export_duplicates,
                 hide_rejects=self.config.thresholds.hide_rejects,
                 progress=progress,
             )
@@ -396,9 +419,24 @@ class Project:
                 result.manifest = write_manifest(
                     self._conn, self.folder, self.config, project_stats(self._conn)
                 )
+                with transaction(self._conn):
+                    set_meta(self._conn, EXPORT_CHOICES_KEY, json.dumps(asdict(choices)))
             run.items, run.bytes = result.written, result.bytes_written
+        result.kept_choices = kept
         result.peak_rss_bytes = run.peak_rss_bytes
         return result
+
+    def export_choices(self) -> ExportChoices | None:
+        """The last export's choices, which the next export keeps unless told otherwise;
+        None when the project was never exported. An index from tripsort 0.4.0 or earlier
+        saved none, so they are read back from the files that export wrote."""
+        saved = get_meta(self._conn, EXPORT_CHOICES_KEY)
+        if saved is None:
+            return written_choices(self._conn, self.folder)
+        data = json.loads(saved)
+        return ExportChoices(
+            hardlinks=bool(data["hardlinks"]), export_duplicates=bool(data["export_duplicates"])
+        )
 
     def stats(self) -> ProjectStats:
         return project_stats(self._conn)

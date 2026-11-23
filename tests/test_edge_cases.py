@@ -43,7 +43,7 @@ def test_a_stale_file_that_is_already_gone(project: Project, trip: dict[str, Pat
     project.export(export_duplicates=True)
     folder = project.folder / "duplicates" / KEEPER.removesuffix(".jpg")
     (folder / COPY).unlink()
-    result = project.export()
+    result = project.export(export_duplicates=False)
     assert (result.removed, result.left_alone) == (1, 0)
     assert not (project.folder / "duplicates").exists()
 
@@ -61,7 +61,7 @@ def test_a_locked_stale_file_is_retried_next_time(
         real_unlink(self, missing_ok=missing_ok)
 
     monkeypatch.setattr(Path, "unlink", locked)
-    first = project.export()
+    first = project.export(export_duplicates=False)
     assert (first.removed, first.left_alone) == (0, 2)
     monkeypatch.setattr(Path, "unlink", real_unlink)
     second = project.export()

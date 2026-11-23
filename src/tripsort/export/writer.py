@@ -23,10 +23,12 @@ import time
 import zipfile
 import zlib
 from collections import Counter, defaultdict
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
+from tripsort.commands import command
 from tripsort.config import OTHER
 from tripsort.errors import ExportError
 from tripsort.export.naming import export_name, fold_key, numbered, person_folder, split_extension
@@ -134,16 +136,40 @@ class ExportResult:
     burst_people: int = 0  # people/ links to a burst shot that is not its best
     manifest: Path | None = None
     peak_rss_bytes: int | None = None
+    # the last export's choices this one kept, where they are not the defaults:
+    # 'hardlinks' (so copies) and 'export_duplicates'
+    kept_choices: tuple[str, ...] = ()
 
-    def summary(self) -> str:
+    def summary(self, *, brief: bool = False) -> str:
+        """What the export did; ``brief`` (after a people fix): the counts, and only what
+        needs attention."""
         verb = "Would write" if self.dry_run else "Wrote"
         lines = [
             f"{verb} {count(self.written, 'file')} ({human_bytes(self.bytes_written)}), "
             f"{self.unchanged:,} already up to date, "
-            f"{self.removed:,} {'to remove' if self.dry_run else 'removed'}.",
+            f"{self.removed:,} {'to remove' if self.dry_run else 'removed'}."
+        ]
+        if not brief:
+            lines.extend(self._folder_lines())
+        if self.link_fallbacks:
+            lines.append(
+                "This drive does not support hardlinks, so the folders besides all/ hold copies."
+            )
+        if self.left_alone:
+            lines.append(
+                f"{count(self.left_alone, 'file')} changed after the last export "
+                "and left as they are."
+            )
+        if self.problems:
+            lines.append(f"{count(len(self.problems), 'file')} could not be exported:")
+            lines.extend(f"  {p.where}: {p.message}" for p in self.problems)
+        return "\n".join(lines)
+
+    def _folder_lines(self) -> list[str]:
+        lines = [
             f"all/ holds {count(self.kept, 'file')}"
             + (f"; unreadable/ holds {self.unreadable:,} for review" if self.unreadable else "")
-            + ".",
+            + "."
         ]
         if self.people_folders or any(self.shots.values()):
             shots = ", ".join(f"{self.shots.get(s, 0):,} {s}" for s in SHOT_FOLDERS)
@@ -188,19 +214,45 @@ class ExportResult:
             left_out = count(self.near_copies, "near-copy", "near-copies")
             verb_was = "was" if self.near_copies == 1 else "were"
             lines.append(f"{left_out} {verb_was} left out of all/; {where}.")
-        if self.link_fallbacks:
-            lines.append(
-                "This drive does not support hardlinks, so the folders besides all/ hold copies."
-            )
-        if self.left_alone:
-            lines.append(
-                f"{count(self.left_alone, 'file')} changed after the last export "
-                "and left as they are."
-            )
-        if self.problems:
-            lines.append(f"{count(len(self.problems), 'file')} could not be exported:")
-            lines.extend(f"  {p.where}: {p.message}" for p in self.problems)
-        return "\n".join(lines)
+        return lines
+
+
+@dataclass(frozen=True)
+class ExportChoices:
+    """The choices that stick: an export keeps the last export's unless told otherwise."""
+
+    hardlinks: bool = True  # False: copies in the folders besides all/ (--copy)
+    export_duplicates: bool = False  # duplicates/: each kept file next to its copies
+
+
+def written_choices(conn: sqlite3.Connection, project_dir: Path) -> ExportChoices | None:
+    """The choices the last export's files show, for an index that saved none (tripsort
+    0.4.0 and earlier); None when nothing was exported. Links that are all copies mean
+    ``--copy`` only on a drive that supports hardlinks: elsewhere they were the fallback."""
+    rows = conn.execute("SELECT role, method FROM exported_files").fetchall()
+    if not rows:
+        return None
+    duplicates = any(role in {"dup_keeper", "dup_copy"} for role, _ in rows)
+    linked = [method for role, method in rows if role in _LINK_ROLES]
+    copies = bool(linked) and all(m == "copy" for m in linked) and hardlinks_work(project_dir)
+    return ExportChoices(hardlinks=not copies, export_duplicates=duplicates)
+
+
+def hardlinks_work(folder: Path) -> bool:
+    """Whether the drive holding ``folder`` supports hardlinks (exFAT and FAT32 do not)."""
+    probe = folder / f".hardlink-probe{TMP_SUFFIX}"
+    link = folder / f".hardlink-probe-link{TMP_SUFFIX}"
+    try:
+        link.unlink(missing_ok=True)
+        probe.write_bytes(b"")
+        link.hardlink_to(probe)
+    except OSError:
+        return False
+    finally:
+        for path in (link, probe):
+            with suppress(OSError):
+                path.unlink(missing_ok=True)
+    return True
 
 
 def export_files(
@@ -476,7 +528,7 @@ class _Writer:
             self._problem(
                 w,
                 f"its zip ({', '.join(names)}) is missing or has changed since it was indexed; "
-                "run `tripsort ingest` with the zip's current location",
+                f"run `{command('ingest')}` with the zip's current location",
             )
             return
         source, member = found

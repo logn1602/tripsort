@@ -100,7 +100,8 @@ def test_reject_rules_are_strict_and_say_why() -> None:
 def test_the_summary_speaks_of_one_reject_and_one_burst_in_the_singular() -> None:
     def lines(rejects: dict[str, int], bursts: int, hidden: bool = False) -> str:
         culling = CullStats(rejects=rejects, hidden=hidden)
-        return "\n".join(_category_lines(CategoryStats(), BurstStats(bursts, 3 * bursts), culling))
+        stats = CategoryStats(), BurstStats(bursts, 3 * bursts), culling
+        return "\n".join(_category_lines(*stats, "sorted"))
 
     one = lines({"blurry": 1}, 1)
     assert "1 photo flagged as a reject (1 blurry): rejects/ lists it to check, and it stays" in one

@@ -14,9 +14,9 @@ from typer.testing import CliRunner
 import tripsort.faces.analyzer
 from tripsort.api import Project
 from tripsort.cli import app
+from tripsort.commands import shell_arg
 from tripsort.errors import ModelError, PeopleError, UserError
 from tripsort.faces.names import display_name
-from tripsort.faces.suggest import shell_arg
 
 runner = CliRunner()
 FRONT = camera_exif(lens="iPhone 15 front camera 2.69mm f/1.9", make="Apple", model="iPhone 15")
@@ -390,6 +390,111 @@ def test_people_commands(
     assert not (out / "review").exists()
     assert not (out / ".tripsort").exists()
     assert (out / "people").is_dir()  # exported folders stay
+
+
+def named_in_manifest(out: Path) -> set[str]:
+    data = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    return {name for entry in data["files"] for name in entry["people"]}
+
+
+def test_people_fixes_move_the_folders_right_away(
+    faces_trip: dict[str, Path], marker_faces: MarkerFaceAnalyzer, tmp_path: Path
+) -> None:
+    out = tmp_path / "sorted"
+    ran = invoke("run", faces_trip["mine"], faces_trip["sam"], "-o", out, "--copy")
+    assert ran.exit_code == 0
+    assert invoke("export", out, "--export-duplicates").exit_code == 0
+    person_02 = members(out / "people" / "person_02")
+    person_03 = members(out / "people" / "person_03")
+    kept = (
+        "Kept from the last export: --copy and --export-duplicates "
+        "(--no-copy and --no-export-duplicates turn them off)."
+    )
+
+    renamed = invoke("people", "rename", out, "person_02", "sam")
+    assert renamed.exit_code == 0
+    assert "person_02 is now sam (5 photos)." in renamed.output
+    assert kept in renamed.output
+    assert "removed." in renamed.output
+    assert "all/ holds" not in renamed.output  # the brief summary
+    assert not (out / "people" / "person_02").exists()
+    assert members(out / "people" / "sam") == person_02
+    assert "sam" in named_in_manifest(out)
+    assert "person_02" not in named_in_manifest(out)
+
+    merged = invoke("people", "merge", out, "person_03", "sam")
+    assert merged.exit_code == 0
+    assert "sam, who now has 8 photos" in merged.output
+    assert not (out / "people" / "person_03").exists()
+    assert members(out / "people" / "sam") == person_02 | person_03
+    assert "person_03" not in named_in_manifest(out)
+    for link in (out / "people" / "sam").iterdir():
+        assert not link.samefile(out / "all" / link.name)  # the run's --copy stuck
+    assert (out / "duplicates").is_dir()  # and so did the later --export-duplicates
+
+    dismissed = invoke("people", "dismiss", out, "person_01", "sam")
+    assert dismissed.exit_code == 0
+    assert "Keeping person_01 and sam apart" in dismissed.output
+    assert "Wrote 0 files" in dismissed.output
+    assert members(out / "people" / "sam") == person_02 | person_03
+
+
+def test_people_fixes_without_an_export(
+    faces_trip: dict[str, Path], marker_faces: MarkerFaceAnalyzer, tmp_path: Path
+) -> None:
+    out = tmp_path / "sorted"
+    export = f"tripsort export {shell_arg(str(out))}"
+    assert invoke("ingest", out, faces_trip["mine"], faces_trip["sam"]).exit_code == 0
+    first = invoke("people", "rename", out, "person_02", "sam")
+    assert first.exit_code == 0
+    assert f"No export yet, so no folders to update; `{export}` writes them." in first.output
+    assert not (out / "people").exists()  # never exported: left alone
+    assert not (out / "all").exists()
+
+    assert invoke("export", out).exit_code == 0
+    sam = members(out / "people" / "sam")
+    held = invoke("people", "rename", out, "sam", "kim", "--no-export")
+    assert held.exit_code == 0
+    assert f"Run `{export}` to update the folders." in held.output
+    merged = invoke("people", "merge", out, "person_03", "kim", "--no-export")
+    assert merged.exit_code == 0
+    assert members(out / "people" / "sam") == sam  # nothing moved yet
+    assert (out / "people" / "person_03").is_dir()
+    assert not (out / "people" / "kim").exists()
+
+    assert invoke("export", out).exit_code == 0
+    assert not (out / "people" / "sam").exists()
+    assert not (out / "people" / "person_03").exists()
+    assert len(members(out / "people" / "kim")) == 8
+
+
+def test_printed_commands_after_a_uvx_run(
+    marker_faces: MarkerFaceAnalyzer, second_look: None, tmp_path: Path, uvx: str
+) -> None:
+    trip = solos(tmp_path, "t", {1: 5, 4: 5, 2: 5}, 100)
+    refs = refs_of(tmp_path, {"sam": 1, "kim": 2})
+    out = tmp_path / "sorted"
+    project = shell_arg(str(out))
+    ran = invoke("run", trip, "-o", out, "--refs", refs)
+    assert ran.exit_code == 0
+    with Project.open(out) as opened:
+        split = unnamed(opened)
+    assert f"check `{uvx} people review {project}` before merging" in ran.output
+    assert f"    merge:   {uvx} people merge {project} {split} sam" in ran.output
+    assert f"    dismiss: {uvx} people dismiss {project} {split} sam" in ran.output
+    assert f"{uvx} people merge {project} {split} sam" in invoke("people", "list", out).output
+
+    reviewed = invoke("people", "review", out)
+    assert f"`{uvx} clean {project}` deletes it" in reviewed.output
+    page = (out / "review" / "people.html").read_text(encoding="utf-8")
+    assert f"<code>{uvx} people merge</code>" in page
+    assert f"{uvx} people dismiss {project} {split} sam" in page
+
+    held = invoke("people", "merge", out, split, "sam", "--no-export")
+    assert f"Run `{uvx} export {project}` to update the folders." in held.output
+    missing = invoke("people", "rename", out, "person_99", "kim")
+    assert missing.exit_code == 1
+    assert f"`{uvx} people list PROJECT` shows everyone" in missing.output
 
 
 def test_offline_run_exits_2(

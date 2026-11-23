@@ -8,6 +8,7 @@ import dataclasses
 import numpy as np
 import pytest
 
+from tripsort.commands import shell_arg
 from tripsort.config import load_config
 from tripsort.errors import PeopleError
 from tripsort.export.naming import person_folder
@@ -22,7 +23,6 @@ from tripsort.faces.suggest import (
     Suggestion,
     people_command,
     pick_candidates,
-    shell_arg,
     suggestion_lines,
 )
 from tripsort.faces.types import normalized

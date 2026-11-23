@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tripsort.commands import command
 from tripsort.errors import PeopleError
 from tripsort.faces.names import check_name, display_name, name_key
 from tripsort.faces.suggest import Suggestion, suggest_merges
@@ -91,7 +92,7 @@ class People:
                 if holder[2] == "user":
                     raise PeopleError(
                         f"{holder[1]!r} is the name of someone else; if they are the same "
-                        f"person, run `tripsort people merge PROJECT {person} {holder[1]}`"
+                        f"person, run `{command('people merge', 'PROJECT', person, holder[1])}`"
                     )
                 self._conn.execute(
                     "UPDATE people SET name = NULL, name_key = NULL, named_by = NULL WHERE id = ?",
@@ -224,7 +225,9 @@ class People:
                 (name_key(text),),
             ).fetchone()
         if row is None:
-            raise PeopleError(f"nobody is called {text!r}; `tripsort people list` shows everyone")
+            raise PeopleError(
+                f"nobody is called {text!r}; `{command('people list', 'PROJECT')}` shows everyone"
+            )
         return dict(zip(("id", "number", "name", "name_key", "named_by"), row, strict=True))
 
     def _infos(self, person_id: int | None = None) -> list[PersonInfo]:

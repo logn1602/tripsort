@@ -115,6 +115,16 @@ def test_unreadable_zip_entries_exit_2_with_advice(tmp_path: Path) -> None:
     assert "without encryption" in plain(result.output)
 
 
+def test_messages_keep_square_brackets(tmp_path: Path) -> None:
+    """Rich reads [video] as a style: names and messages are escaped before printing."""
+    data = make_zip(tmp_path / "raw.zip", [("IMG[copy].jpg", jpeg(photo(1)))]).read_bytes()
+    locked = tmp_path / "locked.zip"
+    locked.write_bytes(patch_entry(data, "IMG[copy].jpg", set_flags=0x1))
+    result = invoke("run", locked, "-o", tmp_path / "sorted")
+    assert result.exit_code == 2
+    assert "IMG[copy].jpg" in plain(result.output)
+
+
 def test_refs_with_no_photos_names_nobody(clean_zip: Path, tmp_path: Path) -> None:
     (tmp_path / "refs").mkdir()
     result = invoke("run", clean_zip, "-o", tmp_path / "sorted", "--refs", tmp_path / "refs")
@@ -171,6 +181,54 @@ def test_step_by_step_commands(trip: dict[str, Path], tmp_path: Path) -> None:
     again = invoke("ingest", out, trip["mine"], trip["sam"])
     assert "already indexed, nothing to read" in again.output
     assert again.exit_code == 0  # nothing went wrong in this ingest
+
+
+def test_export_choices_stick_until_turned_off(trip: dict[str, Path], tmp_path: Path) -> None:
+    out = tmp_path / "sorted"
+    duplicates = out / "duplicates"
+
+    def linked() -> bool:
+        """Whether the keeper in duplicates/ is a hardlink into all/ (else a copy)."""
+        (folder,) = duplicates.iterdir()
+        keeper = folder / f"{folder.name}.jpg"
+        return keeper.samefile(out / "all" / keeper.name)
+
+    first = invoke("run", trip["mine"], trip["sam"], "-o", out, "--copy", "--export-duplicates")
+    assert first.exit_code == 2  # broken.jpg
+    assert "Kept from the last export" not in first.output  # given, not kept
+    assert not linked()
+
+    both = (
+        "Kept from the last export: --copy and --export-duplicates "
+        "(--no-copy and --no-export-duplicates turn them off)."
+    )
+    copies = "Kept from the last export: --copy (--no-copy turns it off)."
+    assert both in plain(invoke("export", out).output)
+    dry = plain(invoke("export", out, "--dry-run", "--no-export-duplicates").output)
+    assert copies in dry
+    assert "2 to remove" in dry
+    assert both in plain(invoke("export", out).output)  # the dry run saved nothing
+
+    dropped = plain(invoke("export", out, "--no-export-duplicates").output)
+    assert copies in dropped
+    assert "2 removed" in dropped
+    assert not duplicates.exists()
+    assert copies in plain(invoke("export", out).output)  # --no-export-duplicates sticks
+    assert not duplicates.exists()
+
+    back = plain(invoke("export", out, "--no-copy", "--export-duplicates").output)
+    assert "Kept from the last export" not in back
+    assert linked()
+    later = plain(invoke("export", out).output)
+    assert "Kept from the last export: --export-duplicates (" in later  # --no-copy sticks
+
+    for args in (
+        ["export", out, "--copy", "--no-copy"],
+        ["run", trip["mine"], "-o", out, "--export-duplicates", "--no-export-duplicates"],
+    ):
+        clash = invoke(*args)
+        assert clash.exit_code == 1
+        assert "cannot be used together" in plain(clash.output)
 
 
 def test_clean(clean_zip: Path, tmp_path: Path) -> None:

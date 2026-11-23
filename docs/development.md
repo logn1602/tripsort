@@ -22,9 +22,10 @@ CI (`.github/workflows/ci.yml`) runs on every push to `main` and every pull requ
 - the tests, linters, and type checks on Windows, macOS, and Linux with Python 3.11 to 3.14;
 - the [eval gate](#the-ci-eval-gate), once per OS (Python 3.13);
 - a fresh install on each OS: the built wheel through `uvx --python 3.13 tripsort run`, the
-  README's quick start, on the [demo trip](#the-demo-trip-and-the-gif), with no model cache, so
-  the models download and pass their SHA-256 checks as on a new computer, and
-  `tools/demo_trip.py check` on the output;
+  README's way to try it once, on the [demo trip](#the-demo-trip-and-the-gif), with no model
+  cache, so the models download and pass their SHA-256 checks as on a new computer,
+  `tools/demo_trip.py check` on the output, and a check that a command it prints after that
+  uvx run starts with `uvx --python 3.13 tripsort`, so it works as pasted;
 - a tiny zip through `tripsort run` from the built wheel (`tools/smoke_test.py`), which catches
   files missing from the wheel.
 
