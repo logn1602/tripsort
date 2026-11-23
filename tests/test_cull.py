@@ -136,17 +136,18 @@ def test_rejects_and_bursts_get_review_folders(
             ("glare.jpg", photo(flat(253), "14:00:00")),
         ],
     )
-    (tmp_path / "sorted").mkdir()
-    (tmp_path / "sorted" / "tripsort.toml").write_text(FAKE_CATEGORIES, encoding="utf-8")
-    with Project.open(tmp_path / "sorted") as project:
+    out = tmp_path / "sorted"
+    out.mkdir()
+    (out / "tripsort.toml").write_text(FAKE_CATEGORIES, encoding="utf-8")
+    with Project.open(out) as project:
         project.ingest([trip])
         analyzed = project.analyze()
         assert analyzed.culling.rejects == {"dark": 1, "blown_out": 1, "blurry": 1}
         assert (analyzed.bursts.bursts, analyzed.culling.bursts) == (1, 1)
         summary = analyzed.summary()
-        assert "3 photos flagged as rejects (1 dark, 1 blown out, 1 blurry)" in summary
+        assert "3 photos flagged as rejects (1 dark, 1 blown out, 1 blurry): rejects/" in summary
+        assert "they stay in their folders" in summary
         result = project.export()
-        out = project.folder
         assert len(list((out / "all").iterdir())) == 6  # rejects and burst shots stay
         assert names(out / "rejects" / "blurry") == {"burst3.jpg"}
         assert names(out / "rejects" / "dark") == {"pocket.jpg"}
@@ -157,13 +158,26 @@ def test_rejects_and_bursts_get_review_folders(
         assert [p.name for p in burst.iterdir() if p.name.startswith("best_")] == [
             "best_" + next(p.name for p in (out / "all").iterdir() if p.name.endswith("burst2.jpg"))
         ]
-        # the curated folders hold the best shot only, and no reject
+        # by default rejects stay in the curated folders too; bursts give them the best shot only
         assert names(out / "categories" / "scenery") == {"burst2.jpg"}
         assert names(out / "categories" / "food") == {"meal.jpg"}
-        assert not (out / "categories" / "documents").exists()  # the glare is a reject
+        assert names(out / "categories" / "documents") == {"glare.jpg"}  # flagged, still here
         assert result.rejects == {"blown_out": 1, "blurry": 1, "dark": 1}
         assert result.bursts == 1
-        assert "rejects/ holds 3 files (1 blown out, 1 blurry, 1 dark)" in result.summary()
+        assert "rejects/ lists 3 files (1 blown out, 1 blurry, 1 dark) to check" in result.summary()
+
+    with (out / "tripsort.toml").open("a", encoding="utf-8") as fp:
+        fp.write("[thresholds]\nhide_rejects = true\n")
+    with Project.open(out) as project:
+        summary = project.analyze().summary()
+        assert "they stay in all/ and go to rejects/, not the people" in summary
+        result = project.export()
+        assert names(out / "rejects" / "blown_out") == {"glare.jpg"}
+        assert names(out / "categories" / "documents") == set()  # hidden: the glare left
+        assert names(out / "categories" / "scenery") == {"burst2.jpg"}
+        assert "rejects/ holds 3 files (1 blown out, 1 blurry, 1 dark), left out of" in (
+            result.summary()
+        )
         manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
         by_member = {f["occurrences"][0]["member"]: f for f in manifest["files"]}
         assert by_member["burst3.jpg"]["reject"] == "blurry"

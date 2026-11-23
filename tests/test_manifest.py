@@ -90,6 +90,7 @@ def test_schema(project: Project, trip: dict[str, Path]) -> None:
         "reject_min_dark_frac": 0.5,
         "reject_min_bright_frac": 1.0,
         "reject_max_detail": 1500.0,
+        "hide_rejects": False,
         "burst_tie_sharpness": 0.95,
     }
     for entry in manifest["files"]:

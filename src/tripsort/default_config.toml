@@ -13,8 +13,9 @@ category_min_score = 0.30               # a photo's top category needs at least 
 category_face_height = 0.03            # a face this tall (share of the photo's height) makes people the subject: `other` (0: off)
 burst_similarity = 0.92                 # CLIP similarity each shot of a burst needs to the burst's first shot
 burst_window_seconds = 10.0             # the most a burst's shots may come after its first, on one camera
-# Rejects (blurry, dark, blown out) stay in all/ but leave people/, shots/, and categories/ for
-# rejects/<reason>/. Strict on purpose, so a merely soft photo of someone stays in their folder.
+# Rejects (blurry, dark, blown out) are listed in rejects/<reason>/ to check, and stay in all/.
+# They also stay in people/, shots/, and categories/ unless hide_rejects is true: on a fresh
+# trip half the photos these values flag were fine (issue #18).
 # Sharpness is the Laplacian variance of a photo's sharpest tiles on a 512 px gray copy.
 # Tuned on the dev halves of two labeled sets (see docs/decisions.md): the loosest values that
 # flag no photo labeled fine, and the strictest of those that flag the same photos.
@@ -23,6 +24,7 @@ reject_max_luma = 50.0                  # dark: mean brightness (0 to 255) under
 reject_min_dark_frac = 0.50             # ... and at least this share of crushed pixels
 reject_min_bright_frac = 0.30           # blown out: more than this share of blown pixels (1: never)
 reject_max_detail = 1500.0              # dark or blown out only with less detail than this (sharp night lights and text stay)
+hide_rejects = false                    # rejects also leave people/, shots/, and categories/
 burst_tie_sharpness = 0.95              # burst shots this close to the sharpest one's sharpness count as tied
 
 [people]

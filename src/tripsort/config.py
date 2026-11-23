@@ -78,6 +78,7 @@ class Thresholds:
     reject_min_dark_frac: float
     reject_min_bright_frac: float
     reject_max_detail: float
+    hide_rejects: bool  # off: rejects stay in people/, shots/, categories/; rejects/ lists them
     burst_tie_sharpness: float
 
 

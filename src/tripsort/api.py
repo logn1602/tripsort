@@ -164,10 +164,16 @@ def _category_lines(c: CategoryStats, b: BurstStats, q: CullStats) -> list[str]:
         reasons = ", ".join(
             f"{n:,} {reason.replace('_', ' ')}" for reason, n in q.rejects.items() if n
         )
-        lines.append(
-            f"{count(rejected, 'photo')} flagged as rejects ({reasons}): they stay in all/ "
-            "and go to rejects/, not the people, shot, or category folders."
-        )
+        if q.hidden:
+            lines.append(
+                f"{count(rejected, 'photo')} flagged as rejects ({reasons}): they stay in all/ "
+                "and go to rejects/, not the people, shot, or category folders."
+            )
+        else:
+            lines.append(
+                f"{count(rejected, 'photo')} flagged as rejects ({reasons}): rejects/ lists them "
+                "to check, and they stay in their folders (hide_rejects = true leaves them out)."
+            )
     if q.not_scored:
         lines.append(
             f"{count(q.not_scored, 'photo')} without sharpness and exposure scores yet; "
@@ -378,6 +384,7 @@ class Project:
                 hardlinks=hardlinks,
                 dry_run=dry_run,
                 export_duplicates=export_duplicates,
+                hide_rejects=self.config.thresholds.hide_rejects,
                 progress=progress,
             )
             if not dry_run:

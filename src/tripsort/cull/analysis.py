@@ -37,6 +37,7 @@ class CullStats:
     scored: int = 0  # kept photos with scores
     not_scored: int = 0  # kept photos without scores yet (scored at the next ingest)
     bursts: int = 0  # bursts given a best shot
+    hidden: bool = False  # rejects leave people/, shots/, and categories/ (hide_rejects)
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,7 @@ def analyze_culling(conn: sqlite3.Connection, config: Config) -> CullStats:
         scored=len(scores),
         not_scored=len(kept) - len(scores),
         bursts=len(ranked),
+        hidden=thresholds.hide_rejects,
     )
 
 

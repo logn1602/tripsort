@@ -129,6 +129,7 @@ class ExportResult:
     shots: dict[str, int] = field(default_factory=dict)  # 'solo', 'group', 'selfie' -> files
     categories: dict[str, int] = field(default_factory=dict)  # category -> files
     rejects: dict[str, int] = field(default_factory=dict)  # reason -> files in rejects/
+    rejects_hidden: bool = False  # rejects left out of people/, shots/, and categories/
     bursts: int = 0  # folders in bursts/
     burst_people: int = 0  # people/ links to a burst shot that is not its best
     manifest: Path | None = None
@@ -156,10 +157,16 @@ class ExportResult:
             reasons = ", ".join(
                 f"{n:,} {reason.replace('_', ' ')}" for reason, n in self.rejects.items() if n
             )
-            lines.append(
-                f"rejects/ holds {count(rejected, 'file')} ({reasons}), left out of people/, "
-                "shots/, and categories/."
-            )
+            if self.rejects_hidden:
+                lines.append(
+                    f"rejects/ holds {count(rejected, 'file')} ({reasons}), left out of people/, "
+                    "shots/, and categories/."
+                )
+            else:
+                lines.append(
+                    f"rejects/ lists {count(rejected, 'file')} ({reasons}) to check; they stay "
+                    "in people/, shots/, and categories/ too."
+                )
         if self.bursts:
             line = (
                 f"bursts/ shows {count(self.bursts, 'burst')} shot by shot; the best_ one is "
@@ -202,8 +209,11 @@ def export_files(
     hardlinks: bool = True,
     dry_run: bool = False,
     export_duplicates: bool = False,
+    hide_rejects: bool = False,
     progress: Progress | None = None,
 ) -> ExportResult:
+    """``hide_rejects`` leaves rejects out of people/, shots/, and categories/; either way
+    rejects/ lists them."""
     started = time.perf_counter()
     progress = progress or NullProgress()
     media = _load_media(conn)
@@ -255,11 +265,12 @@ def export_files(
     shots = _load_shot_folders(conn)
     categories = _load_category_folders(conn)
     rejects = _load_rejects(conn)
+    hidden_rejects = rejects if hide_rejects else {}
     bursts = _load_bursts(conn)
-    hidden = set(rejects) | set(live)  # left out of people/, shots/, and categories/
+    hidden = set(hidden_rejects) | set(live)  # left out of people/, shots/, and categories/
     for burst in bursts:
         hidden.update(s for s in burst.shots if s != burst.best)
-    own_best = _own_best_shots(bursts, people, rejects, set(all_relpath))
+    own_best = _own_best_shots(bursts, people, hidden_rejects, set(all_relpath))
     for m in by_date:
         rel = all_relpath.get(m.id)
         if rel is None:
@@ -322,6 +333,7 @@ def export_files(
         rejects=dict(
             sorted(Counter(w.folder.split("/", 1)[1] for w in wanted if w.role == "reject").items())
         ),
+        rejects_hidden=hide_rejects,
         bursts=burst_folders,
         burst_people=sum(len(folders) for folders in own_best.values()),
     )
@@ -791,7 +803,8 @@ def _own_best_shots(
 ) -> dict[int, list[str]]:
     """Burst shot -> the people/ folders it goes in although it is not its burst's best
     shot: everyone the best shot leaves out gets their own best shot of the burst, the
-    first in the burst's ranking that shows them and is no reject."""
+    first in the burst's ranking that shows them and is not in ``rejects`` (the hidden
+    rejects: none unless hide_rejects is on)."""
     found: defaultdict[int, list[str]] = defaultdict(list)
     for burst in bursts:
         best = burst.best

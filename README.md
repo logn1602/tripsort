@@ -19,7 +19,8 @@ After a group trip, everyone has a zip of photos from their own phone. tripsort 
 - sorts photos into categories such as scenery, animals, food, and documents, defined as editable text prompts;
 - groups bursts, several shots of one moment, and puts the best shot in the folders, plus each
   friend's own best shot of the moment when the best one leaves them out;
-- sets clearly blurry, dark, and blown-out photos aside for review, without deleting anything;
+- lists photos that look blurry, dark, or blown out in `rejects/` to check, without hiding or
+  deleting anything;
 - sorts videos into categories (with the `video` extra; finding friends in videos is there to
   try, but off by default), and keeps each Live Photo's motion clip next to its still;
 - exports plain folders plus a `manifest.json`, and never modifies the input zips.
@@ -62,7 +63,7 @@ sorted/
 ├── people/          a folder per person: alex/, sam/, person_03/, ...
 ├── shots/           solo/, group/, selfie/
 ├── categories/      scenery/, animals/, food/, documents/ (other photos get no folder)
-├── rejects/         blurry/, dark/, blown_out/: photos left out of the three folders above
+├── rejects/         blurry/, dark/, blown_out/: photos to check, still in the folders above
 ├── bursts/          a folder per burst with every shot; the best one is named best_...
 ├── unreadable/      files whose bytes could be read but not decoded, for review
 ├── duplicates/      only with --export-duplicates: each kept file next to its copies
@@ -261,17 +262,21 @@ photo's pixels.
   of its pixels are crushed, blown out when more than 30% of its pixels are blown, and blurry
   when its sharpest tiles score under 75, checked in that order. Dark and blown-out photos
   count only when their sharpest tiles also score under 1500, so a night shot with sharp
-  lights or a screenshot of text stays. Rejects leave `people/`, `shots/`, and `categories/`
-  for `rejects/<reason>/`. The thresholds are strict on purpose: a merely soft photo of a
-  friend belongs in their folder, not hidden in `rejects/`. They are the loosest values that
-  flag no photo labeled fine on the dev halves of two labeled sets, so most photos a person
-  would call bad stay in the folders (see [Measuring culling](#measuring-culling)).
+  lights or a screenshot of text stays. `rejects/<reason>/` lists them to check, and they
+  stay in `people/`, `shots/`, and `categories/` as well: a merely soft photo of a friend
+  belongs in their folder. The thresholds are the loosest values that flag no photo labeled
+  fine on the dev halves of two labeled sets, but on a fresh trip half the photos they flagged
+  were fine, since fixed cut-offs do not carry over between cameras and trips
+  ([#18](https://github.com/logn1602/tripsort/issues/18)). `hide_rejects = true` in
+  `[thresholds]` leaves rejects out of those three folders.
 - **The best shot of a burst** is the first by: not a reject; sharpness, where shots at least
   95% as sharp as the sharpest one count as tied; fewer clipped pixels; more faces (a friend
   who turned away or stepped out of frame shows fewer); sharper; earlier. Only the best shot
   goes into `shots/` and `categories/`, and into the `people/` folder of everyone it shows.
   Someone the best shot leaves out gets their own best shot of the burst in their folder (the
-  best-ranked shot that shows them and is no reject), so no friend loses the moment.
+  best-ranked shot that shows them, and no hidden reject), so no friend loses the moment.
+  On two labeled trips, where the labeler preferred one shot, the best shot matched it 14
+  times in 28, little better than chance ([#19](https://github.com/logn1602/tripsort/issues/19)).
   `bursts/<first shot>/` shows every shot of each burst, the best one named `best_...`, to
   pick another by hand.
 - **Closed eyes** are not flagged yet.
@@ -361,6 +366,7 @@ reject_max_luma = 50.0                  # dark: mean brightness (0 to 255) under
 reject_min_dark_frac = 0.50             # ... and at least this share of crushed pixels
 reject_min_bright_frac = 0.30           # blown out: more than this share of blown pixels (1: never)
 reject_max_detail = 1500.0              # dark or blown out only with less detail than this
+hide_rejects = false                    # rejects also leave people/, shots/, and categories/
 burst_tie_sharpness = 0.95              # burst shots this close to the sharpest count as tied
 ```
 
