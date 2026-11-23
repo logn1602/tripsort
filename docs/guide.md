@@ -18,7 +18,7 @@ decisions, with the measurements behind them, are in the [decision log](decision
 
 ## Install
 
-tripsort supports Python 3.11 to 3.13, the versions CI tests. It does not run on Python 3.15
+tripsort supports Python 3.11 to 3.14, the versions CI tests. It does not run on Python 3.15
 yet, because onnxruntime, which runs the models, has no wheels for it.
 
 ```console

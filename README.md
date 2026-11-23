@@ -37,7 +37,7 @@ uvx --python 3.13 tripsort run mine.zip sam.zip alex.zip -o sorted/ --refs refs/
 ```
 
 `--python 3.13` makes uv use Python 3.13, downloading it if needed. tripsort supports Python
-3.11 to 3.13, the versions CI tests; it does not run on 3.15 yet, because onnxruntime, which
+3.11 to 3.14, the versions CI tests; it does not run on 3.15 yet, because onnxruntime, which
 runs the models, has no wheels for it. With pip, on one of those versions:
 `pip install tripsort`, then `tripsort run ...` as above.
 

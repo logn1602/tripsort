@@ -6,7 +6,7 @@ holds the settled design decisions with the measurements behind them.
 
 ## Setup
 
-The project uses [uv](https://docs.astral.sh/uv/) for everything, with Python 3.11 to 3.13.
+The project uses [uv](https://docs.astral.sh/uv/) for everything, with Python 3.11 to 3.14.
 
 ```console
 uv sync --all-extras                 # create .venv with the dev tools and the video extra
@@ -19,7 +19,7 @@ uv run pre-commit install            # optional: run the checks on every commit
 
 CI (`.github/workflows/ci.yml`) runs on every push to `main` and every pull request:
 
-- the tests, linters, and type checks on Windows, macOS, and Linux with Python 3.11 to 3.13;
+- the tests, linters, and type checks on Windows, macOS, and Linux with Python 3.11 to 3.14;
 - the [eval gate](#the-ci-eval-gate), once per OS (Python 3.13);
 - a fresh install on each OS: the built wheel through `uvx --python 3.13 tripsort run`, the
   README's quick start, on the [demo trip](#the-demo-trip-and-the-gif), with no model cache, so
