@@ -6,7 +6,7 @@ import pytest
 from factories import camera_exif, jpeg, make_zip, photo, whatsapp_copy
 
 import tripsort.export.writer as writer
-from tripsort.api import Project, clean
+from tripsort.api import ExportChoices, Project, clean
 from tripsort.errors import ExportError
 
 KEEPER = "20260714_102345_mine_PXL_20260714_082345120.jpg"
@@ -112,9 +112,52 @@ def test_copy_option_never_links(ingested: Project) -> None:
     assert (result.linked, result.link_fallbacks) == (0, 0)
 
 
+def test_export_choices_stick(ingested: Project) -> None:
+    assert ingested.export_choices() is None
+    ingested.export(dry_run=True, hardlinks=False)
+    assert ingested.export_choices() is None  # a dry run saves nothing
+    first = ingested.export(hardlinks=False, export_duplicates=True)
+    assert first.kept_choices == ()  # given, not kept
+    assert ingested.export_choices() == ExportChoices(hardlinks=False, export_duplicates=True)
+
+    again = ingested.export()
+    assert again.kept_choices == ("hardlinks", "export_duplicates")
+    assert (again.written, again.removed) == (0, 0)
+    folder = ingested.folder / "duplicates" / KEEPER.removesuffix(".jpg")
+    assert not (folder / KEEPER).samefile(ingested.folder / "all" / KEEPER)
+
+    linked = ingested.export(hardlinks=True)
+    assert linked.kept_choices == ("export_duplicates",)
+    assert ingested.export_choices() == ExportChoices(hardlinks=True, export_duplicates=True)
+
+
+def test_an_older_index_keeps_its_choices(ingested: Project) -> None:
+    """tripsort 0.4.0 saved no choices: they are read back from the files it wrote."""
+    ingested.export(hardlinks=False, export_duplicates=True)
+    ingested.connection.execute("DELETE FROM meta WHERE key = 'export_choices'")
+    assert ingested.export_choices() == ExportChoices(hardlinks=False, export_duplicates=True)
+    assert list(ingested.folder.glob(f"*{writer.TMP_SUFFIX}")) == []  # the probe is gone
+    result = ingested.export()
+    assert result.kept_choices == ("hardlinks", "export_duplicates")
+    assert (result.written, result.removed) == (0, 0)
+
+
+def test_copies_where_hardlinks_fail_were_not_chosen(
+    ingested: Project, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(self: Path, target: Path) -> None:
+        raise OSError(1, "Incorrect function")  # what exFAT says on Windows
+
+    monkeypatch.setattr(Path, "hardlink_to", refuse)
+    ingested.export(export_duplicates=True)
+    ingested.connection.execute("DELETE FROM meta WHERE key = 'export_choices'")
+    assert ingested.export_choices() == ExportChoices(hardlinks=True, export_duplicates=True)
+    assert not writer.hardlinks_work(ingested.folder)
+
+
 def test_dropping_export_duplicates_removes_the_review_folder(ingested: Project) -> None:
     ingested.export(export_duplicates=True)
-    result = ingested.export()
+    result = ingested.export(export_duplicates=False)
     assert result.removed == 2
     assert not (ingested.folder / "duplicates").exists()
 
@@ -123,7 +166,7 @@ def test_files_edited_after_export_are_left_alone(ingested: Project) -> None:
     ingested.export(export_duplicates=True)
     copy = ingested.folder / "duplicates" / KEEPER.removesuffix(".jpg") / COPY
     copy.write_bytes(b"edited by the user")
-    result = ingested.export()
+    result = ingested.export(export_duplicates=False)
     assert copy.read_bytes() == b"edited by the user"
     assert (result.removed, result.left_alone) == (1, 1)
     assert "changed after the last export" in result.summary()

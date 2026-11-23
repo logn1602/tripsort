@@ -103,6 +103,16 @@ jobs:
       - name: Check what it sorted
         run: uv run tools/demo_trip.py check "$RUNNER_TEMP/demo/sorted" "$RUNNER_TEMP/demo"
 
+      # After a uvx run, the commands tripsort prints must start with uvx to work as pasted
+      # (#24). Renaming someone unknown fails with a message naming `people list`, and
+      # changes nothing.
+      - name: Check a command it prints after a uvx run
+        run: |
+          printed=$(uvx --python 3.13 --from dist/tripsort-*.whl tripsort people rename \
+            "$RUNNER_TEMP/demo/sorted" nobody somebody 2>&1 || true)
+          echo "$printed"
+          grep -F '`uvx --python 3.13 tripsort people list PROJECT` shows everyone' <<< "$printed"
+
   package:
     name: build and smoke-test the wheel
     runs-on: ubuntu-latest

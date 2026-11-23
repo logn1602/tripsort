@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -23,6 +24,7 @@ from rich.progress import Progress as RichProgressBar
 from typer.core import TyperGroup
 
 from tripsort import __version__
+from tripsort.commands import command  # standard library only, as is the next one
 from tripsort.stats import count  # standard library only, so --version stays fast
 
 if TYPE_CHECKING:
@@ -100,8 +102,18 @@ RefsOpt = Annotated[
         help="Folder with one clear photo per person (NAME.jpg or NAME/*.jpg), used to name people."
     ),
 ]
+# --copy and --export-duplicates stick, so each has a --no- twin. They are separate
+# options, not "--copy/--no-copy" pairs, whose two name columns get cut off in 80 columns.
 CopyOpt = Annotated[
-    bool, typer.Option("--copy", help="Make copies instead of hardlinks in the review folders.")
+    bool,
+    typer.Option(
+        "--copy",
+        help="Make copies instead of hardlinks in the review folders. Later exports keep "
+        "making copies until --no-copy.",
+    ),
+]
+NoCopyOpt = Annotated[
+    bool, typer.Option("--no-copy", help="Hardlinks again, after an export with --copy.")
 ]
 DryRunOpt = Annotated[
     bool, typer.Option("--dry-run", help="Show what the export would do; write no output files.")
@@ -110,9 +122,26 @@ DuplicatesOpt = Annotated[
     bool,
     typer.Option(
         "--export-duplicates",
-        help="Also write duplicates/: each kept file next to the copies left out of all/.",
+        help="Also write duplicates/: each kept file next to the copies left out of all/. "
+        "Later exports keep it until --no-export-duplicates.",
     ),
 ]
+NoDuplicatesOpt = Annotated[
+    bool, typer.Option("--no-export-duplicates", help="Leave duplicates/ out again.")
+]
+NoExportOpt = Annotated[
+    bool,
+    typer.Option(
+        "--no-export",
+        help="Only change the index, for several fixes in a row; the next export moves the "
+        "folders.",
+    ),
+]
+# Where an export kept the last export's choice: the flag it applied, and the one to undo it
+_CHOICE_FLAGS = {
+    "hardlinks": ("--copy", "--no-copy"),
+    "export_duplicates": ("--export-duplicates", "--no-export-duplicates"),
+}
 BenchmarkOpt = Annotated[
     bool, typer.Option("--benchmark", help="Print time, files per second, and peak memory.")
 ]
@@ -127,12 +156,16 @@ def run(
     ],
     refs: RefsOpt = None,
     copy: CopyOpt = False,
+    no_copy: NoCopyOpt = False,
     dry_run: DryRunOpt = False,
     export_duplicates: DuplicatesOpt = False,
+    no_export_duplicates: NoDuplicatesOpt = False,
     benchmark: BenchmarkOpt = False,
 ) -> None:
     """Ingest, analyze, and export in one step."""
     _check_refs(refs)
+    hardlinks = _hardlinks(copy, no_copy)
+    duplicates = _choice(export_duplicates, no_export_duplicates, "--export-duplicates")
     with _project(out) as project:
         ingested = project.ingest(zips, progress=_RichProgress())
         _show_ingest(ingested)
@@ -142,12 +175,12 @@ def run(
         analyzed = _analyze_with_refs(project, refs)
         typer.echo(analyzed.summary(project=str(out)))
         exported = project.export(
-            hardlinks=not copy,
+            hardlinks=hardlinks,
             dry_run=dry_run,
-            export_duplicates=export_duplicates,
+            export_duplicates=duplicates,
             progress=_RichProgress(),
         )
-        typer.echo(exported.summary())
+        _show_export(exported)
         if benchmark:
             _show_benchmark(ingested, analyzed, exported)
         code = _exit_code(project, ingested, exported)
@@ -191,19 +224,24 @@ def analyze(project_dir: ProjectArg, refs: RefsOpt = None, benchmark: BenchmarkO
 def export(
     project_dir: ProjectArg,
     copy: CopyOpt = False,
+    no_copy: NoCopyOpt = False,
     dry_run: DryRunOpt = False,
     export_duplicates: DuplicatesOpt = False,
+    no_export_duplicates: NoDuplicatesOpt = False,
     benchmark: BenchmarkOpt = False,
 ) -> None:
-    """Write all/, the review folders, and manifest.json."""
+    """Write all/, the review folders, and manifest.json. --copy and --export-duplicates
+    stick: each export keeps the last one's until --no-copy or --no-export-duplicates."""
+    hardlinks = _hardlinks(copy, no_copy)
+    duplicates = _choice(export_duplicates, no_export_duplicates, "--export-duplicates")
     with _project(project_dir) as project:
         result = project.export(
-            hardlinks=not copy,
+            hardlinks=hardlinks,
             dry_run=dry_run,
-            export_duplicates=export_duplicates,
+            export_duplicates=duplicates,
             progress=_RichProgress(),
         )
-        typer.echo(result.summary())
+        _show_export(result)
         if benchmark:
             _show_benchmark(None, None, result)
         code = _exit_code(project, None, result)
@@ -280,7 +318,10 @@ def people_review(
             per_person=per_person, progress=_RichProgress(), project=str(project_dir)
         )
     typer.echo(f"Wrote {path}")
-    typer.echo("It shows faces, so keep it private; `tripsort clean` deletes it with the index.")
+    typer.echo(
+        f"It shows faces, so keep it private; `{command('clean', str(project_dir))}` deletes "
+        "it with the index."
+    )
 
 
 @people_app.command("rename")
@@ -288,11 +329,15 @@ def people_rename(
     project_dir: ProjectArg,
     person: Annotated[str, typer.Argument(help="Current name, or person_NN.")],
     new_name: Annotated[str, typer.Argument(metavar="NEW_NAME", help="The name to give.")],
+    no_export: NoExportOpt = False,
 ) -> None:
-    """Name a person (or rename them). Run `tripsort export` afterwards to move the folder."""
+    """Name a person (or rename them). Their folder moves right away, with the last
+    export's choices."""
     with _project(project_dir) as project:
         info = project.people.rename(person, new_name)
-    typer.echo(f"person_{info.number:02d} is now {info.name} ({count(info.photos, 'photo')}).")
+        typer.echo(f"person_{info.number:02d} is now {info.name} ({count(info.photos, 'photo')}).")
+        code = _update_folders(project, project_dir, no_export)
+    raise typer.Exit(code)
 
 
 @people_app.command("merge")
@@ -300,11 +345,15 @@ def people_merge(
     project_dir: ProjectArg,
     person: Annotated[str, typer.Argument(help="The person to merge away.")],
     into: Annotated[str, typer.Argument(help="The person who keeps every photo.")],
+    no_export: NoExportOpt = False,
 ) -> None:
-    """Say two people are one, for example one person split by sunglasses."""
+    """Say two people are one, for example one person split by sunglasses. The folders
+    follow right away, with the last export's choices."""
     with _project(project_dir) as project:
         info = project.people.merge(person, into)
-    typer.echo(f"Merged {person} into {info.name}, who now has {count(info.photos, 'photo')}.")
+        typer.echo(f"Merged {person} into {info.name}, who now has {count(info.photos, 'photo')}.")
+        code = _update_folders(project, project_dir, no_export)
+    raise typer.Exit(code)
 
 
 @people_app.command("dismiss")
@@ -312,15 +361,18 @@ def people_dismiss(
     project_dir: ProjectArg,
     person: Annotated[str, typer.Argument(help="A name, or person_NN.")],
     other: Annotated[str, typer.Argument(help="The person they are not.")],
+    no_export: NoExportOpt = False,
 ) -> None:
     """Say two people are not one: their merge is never suggested again, and later
-    clusterings keep them apart."""
+    clusterings keep them apart. The folders follow right away."""
     with _project(project_dir) as project:
         first, second = project.people.dismiss(person, other)
-    typer.echo(
-        f"Keeping {first.name} and {second.name} apart; "
-        "tripsort will not suggest merging them again."
-    )
+        typer.echo(
+            f"Keeping {first.name} and {second.name} apart; "
+            "tripsort will not suggest merging them again."
+        )
+        code = _update_folders(project, project_dir, no_export)
+    raise typer.Exit(code)
 
 
 models_app = typer.Typer(
@@ -363,10 +415,10 @@ def _user_errors() -> Iterator[None]:
     try:
         yield
     except UserError as exc:
-        err.print(f"[red]error:[/] {exc}")
+        err.print(f"[red]error:[/] {escape(str(exc))}")
         raise typer.Exit(EXIT_USER_ERROR) from None
     except OSError as exc:
-        err.print(f"[red]error:[/] {exc}")
+        err.print(f"[red]error:[/] {escape(str(exc))}")
         raise typer.Exit(EXIT_USER_ERROR) from None
 
 
@@ -384,7 +436,7 @@ def _project(folder: Path) -> Iterator["Project"]:
 
 def _check_refs(refs: Path | None) -> None:
     if refs is not None and not refs.is_dir():
-        err.print(f"[red]error:[/] {refs}: no such folder")
+        err.print(f"[red]error:[/] {escape(str(refs))}: no such folder")
         raise typer.Exit(EXIT_USER_ERROR)
 
 
@@ -400,7 +452,7 @@ def _analyze_with_refs(project: "Project", refs: Path | None) -> "AnalyzeResult"
 
 def _show_refs(result: "RefsResult") -> None:
     for problem in result.problems:
-        err.print(f"[yellow]refs: {problem}[/]")
+        err.print(f"[yellow]refs: {escape(problem)}[/]")
     typer.echo(result.summary())
 
 
@@ -417,6 +469,47 @@ def _exit_code(
     return EXIT_PARTIAL if partial else EXIT_OK
 
 
+def _choice(on: bool, off: bool, flag: str) -> bool | None:
+    """A flag and its --no- twin as True, False, or None: neither keeps the last choice."""
+    if on and off:
+        twin = "--no-" + flag.removeprefix("--")
+        err.print(f"[red]error:[/] {flag} and {twin} cannot be used together")
+        raise typer.Exit(EXIT_USER_ERROR)
+    return True if on else False if off else None
+
+
+def _hardlinks(copy: bool, no_copy: bool) -> bool | None:
+    """--copy and --no-copy as ``Project.export``'s ``hardlinks``."""
+    chosen = _choice(copy, no_copy, "--copy")
+    return None if chosen is None else not chosen
+
+
+def _show_export(result: "ExportResult", *, brief: bool = False) -> None:
+    """The export summary, after a line naming the last export's choices it kept."""
+    if result.kept_choices:
+        flags = [_CHOICE_FLAGS[choice] for choice in result.kept_choices]
+        kept = " and ".join(on for on, _ in flags)
+        undo = " and ".join(off for _, off in flags)
+        verb = "turns it" if len(flags) == 1 else "turn them"
+        typer.echo(f"Kept from the last export: {kept} ({undo} {verb} off).")
+    typer.echo(result.summary(brief=brief))
+
+
+def _update_folders(project: "Project", project_dir: Path, no_export: bool) -> int:
+    """After a rename, merge, or dismiss: export with the last export's choices, so the
+    folders follow the fix. Returns the exit code."""
+    again = command("export", str(project_dir))
+    if no_export:
+        typer.echo(f"Run `{again}` to update the folders.")
+        return EXIT_OK
+    if project.export_choices() is None:
+        typer.echo(f"No export yet, so no folders to update; `{again}` writes them.")
+        return EXIT_OK
+    result = project.export(progress=_RichProgress())
+    _show_export(result, brief=True)
+    return _exit_code(project, None, result)
+
+
 def _models_missing(result: "IngestResult") -> bool:
     """Some photos could not be scanned for faces or embedded with CLIP."""
     return bool(
@@ -427,7 +520,8 @@ def _models_missing(result: "IngestResult") -> bool:
 def _show_ingest(result: "IngestResult") -> None:
     typer.echo(result.summary())
     for problem in result.problems:
-        err.print(f"[yellow]{problem.source}: {problem.member}[/]: {problem.message}")
+        where = escape(f"{problem.source}: {problem.member}")
+        err.print(f"[yellow]{where}[/]: {escape(problem.message)}")
 
 
 def _show_benchmark(

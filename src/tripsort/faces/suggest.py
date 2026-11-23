@@ -18,7 +18,6 @@ The most similar named person is suggested, and the next one as well when it is 
 ``SECOND_WITHIN`` of the first: two friends who look alike.
 """
 
-import re
 import sqlite3
 from collections import defaultdict
 from collections.abc import Mapping, Set
@@ -27,13 +26,13 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
+from tripsort.commands import command
 from tripsort.faces.names import display_name
 from tripsort.faces.types import EMBEDDING_SIZE
 from tripsort.stats import count
 
 Vector = npt.NDArray[np.float32]
 SECOND_WITHIN = 0.05  # a second candidate this close to the first is shown too
-_PLAIN_ARG = re.compile(r"^[\w./\\:-]+$")  # safe unquoted in POSIX shells, PowerShell, and cmd
 
 
 @dataclass(frozen=True)
@@ -132,22 +131,9 @@ def suggest_merges(
     return suggestions
 
 
-def shell_arg(text: str) -> str:
-    """``text`` as one command-line argument to paste into a shell: as is when it is plain,
-    else in double quotes (single quotes when it holds a double quote)."""
-    if _PLAIN_ARG.match(text):
-        return text
-    if '"' not in text:
-        return f'"{text}"'
-    return "'" + text.replace("'", "'\"'\"'") + "'"
-
-
 def people_command(action: str, project: str, *people: str) -> str:
-    """``tripsort people ACTION PROJECT PEOPLE...``, quoted for a shell. ``--`` comes first
-    when an argument starts with a dash, so it is not read as an option."""
-    args = [project, *people]
-    end = ["--"] if any(a.startswith("-") for a in args) else []
-    return " ".join(["tripsort", "people", action, *end, *(shell_arg(a) for a in args)])
+    """``tripsort people ACTION PROJECT PEOPLE...``, ready to paste (see ``command``)."""
+    return command(f"people {action}", project, *people)
 
 
 def describe(suggestion: Suggestion) -> str:

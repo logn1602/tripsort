@@ -30,16 +30,22 @@ Every frame comes from a real run
 
 ## Quick start
 
-With [uv](https://docs.astral.sh/uv/), run it without installing anything:
+With [uv](https://docs.astral.sh/uv/), install it, then run it:
 
 ```console
-uvx --python 3.13 tripsort run mine.zip sam.zip alex.zip -o sorted/ --refs refs/
+uv tool install --python 3.13 tripsort
+tripsort run mine.zip sam.zip alex.zip -o sorted/ --refs refs/
 ```
 
 `--python 3.13` makes uv use Python 3.13, downloading it if needed. tripsort supports Python
 3.11 to 3.14, the versions CI tests; it does not run on 3.15 yet, because onnxruntime, which
-runs the models, has no wheels for it. With pip, on one of those versions:
-`pip install tripsort`, then `tripsort run ...` as above.
+runs the models, has no wheels for it. If your shell cannot find `tripsort` after the install,
+`uv tool update-shell` adds uv's tools folder to your PATH. With pip, on one of those
+versions: `pip install tripsort`.
+
+To try it once without installing anything, use
+`uvx --python 3.13 tripsort run ...`. The commands it prints for later fixes then start with
+`uvx --python 3.13 tripsort`, so they work as pasted.
 
 - **`refs/`** holds one clear photo of each friend, named after them (`refs/sam.jpg`), and
   names their folders. Without it the folders are `person_01`, `person_02`, and so on, and you
@@ -49,15 +55,16 @@ runs the models, has no wheels for it. With pip, on one of those versions:
 - **Nothing is deleted or changed.** The zips are only read, every photo kept is in `all/`,
   and the other folders hold hardlinks into it, so a photo in five folders takes space once.
 - **Run it again** and it finishes in seconds. Add a zip and only its new files are read.
-- **Videos:** `pip install "tripsort[video]"` also looks inside videos and sorts them into
-  categories. Without it, videos are deduplicated and copied to `all/`, and each Live Photo's
-  motion clip still goes next to its still.
+- **Videos:** `uv tool install --python 3.13 "tripsort[video]"` (or
+  `pip install "tripsort[video]"`) also looks inside videos and sorts them into categories.
+  Without it, videos are deduplicated and copied to `all/`, and each Live Photo's motion clip
+  still goes next to its still.
 
 To try it on the demo trip from the GIF, clone this repository and run:
 
 ```console
 uv run tools/demo_trip.py build demo
-uvx --python 3.13 tripsort run demo/lisa.zip demo/george.zip demo/pearl.zip -o demo/sorted --refs demo/refs
+tripsort run demo/lisa.zip demo/george.zip demo/pearl.zip -o demo/sorted --refs demo/refs
 ```
 
 ## What you get
@@ -86,8 +93,11 @@ tripsort people review  sorted/                   # review/people.html: face cro
 tripsort people rename  sorted/ person_03 alex    # name someone
 tripsort people merge   sorted/ person_07 alex    # one friend split in two (sunglasses)
 tripsort people dismiss sorted/ person_09 alex    # not alex: stop suggesting it
-tripsort export         sorted/                   # moves the links; reads no photo again
 ```
+
+Each fix moves the folders right away, reading no photo again, and keeps the choices of your
+last export, such as `--copy`. For several fixes in a row, add `--no-export` to each and run
+`tripsort export sorted/` once at the end.
 
 A friend can come out as two people, for example with and without sunglasses. tripsort
 suggests the merge but never merges on its own. Names, merges, and settings are kept when you
@@ -148,7 +158,7 @@ the folders before you share them. These are the weak spots, most with an open i
   ([#9](https://github.com/logn1602/tripsort/issues/9)), and Google Takeout's JSON dates are
   not read yet ([#3](https://github.com/logn1602/tripsort/issues/3)).
 - **Not on Python 3.15 yet:** onnxruntime has no wheels for it, so `pip install tripsort`
-  fails there. `uvx --python 3.13`, as in the quick start, works on any computer.
+  fails there. `uv tool install --python 3.13`, as in the quick start, works on any computer.
 
 ## Configuration
 

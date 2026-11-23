@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 
 from tripsort.clip.store import ClipBatch, pending_clip_scans
 from tripsort.clip.types import CLIP_MODEL_ID, ClipPixels, ImageEncoder
+from tripsort.commands import command
 from tripsort.config import VideoSettings
 from tripsort.cull.quality import QUALITY_VERSION, Quality, store_quality
 from tripsort.faces.store import pending_scans, store_scan
@@ -140,7 +141,7 @@ class IngestResult:
             lines.append(
                 f"{count(self.faces_pending, 'photo')} still "
                 f"{'waits' if self.faces_pending == 1 else 'wait'} for a face scan, so people/ "
-                "and shots/ leave them out until a later `tripsort ingest` scans them."
+                f"and shots/ leave them out until a later `{command('ingest')}` scans them."
             )
         if self.clip_problem:
             lines.append(f"Photos were not embedded for categories and bursts: {self.clip_problem}")
@@ -153,7 +154,7 @@ class IngestResult:
             lines.append(
                 f"{count(self.clip_pending, 'photo')} still "
                 f"{'waits' if self.clip_pending == 1 else 'wait'} for a CLIP embedding, so "
-                "categories/ and bursts leave them out until a later `tripsort ingest`."
+                f"categories/ and bursts leave them out until a later `{command('ingest')}`."
             )
         return "\n".join(lines)
 
@@ -369,7 +370,7 @@ def _scan_pending(run: _Run) -> None:
                 ", ".join(names),
                 count(photos, "photo"),
                 "not scanned: the zip is missing or has changed since it was indexed; run "
-                "`tripsort ingest` with the zip's current location",
+                f"`{command('ingest')}` with the zip's current location",
             )
         )
 

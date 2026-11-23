@@ -21,20 +21,31 @@ decisions, with the measurements behind them, are in the [decision log](decision
 tripsort supports Python 3.11 to 3.14, the versions CI tests. It does not run on Python 3.15
 yet, because onnxruntime, which runs the models, has no wheels for it.
 
+With [uv](https://docs.astral.sh/uv/), which downloads Python 3.13 if needed:
+
+```console
+uv tool install --python 3.13 tripsort
+```
+
+If your shell cannot find `tripsort` afterwards, `uv tool update-shell` adds uv's tools
+folder to your PATH, and `uv tool upgrade tripsort` updates it later. Or with pip:
+
 ```console
 pip install tripsort
 ```
 
-Or run it without installing, with uv, which downloads Python 3.13 if needed:
-`uvx --python 3.13 tripsort --version`. Without `--python`, uvx uses the computer's default
-Python, which fails when that is 3.15.
+To run it without installing, use `uvx --python 3.13 tripsort ...` for every command,
+including the fixes after a run; the commands tripsort prints then start that way too.
+Without `--python`, uv uses the computer's default Python, which fails when that is 3.15.
 
 To look inside videos as well (categories, Live Photo lengths, dates, and people if turned
 on), add the `video` extra, which brings [PyAV](https://github.com/PyAV-Org/PyAV) and the
 FFmpeg its wheels bundle:
 
 ```console
-pip install "tripsort[video]"
+uv tool install --python 3.13 "tripsort[video]"
+pip install "tripsort[video]"                          # or with pip
+uvx --python 3.13 --from "tripsort[video]" tripsort    # or without installing, then the command
 ```
 
 Without it, videos are still deduplicated by content and exported to `all/`.
@@ -81,6 +92,12 @@ tripsort clean   sorted/                     # delete the index and review pages
 
 Add `--benchmark` to any of them to see files per second and peak memory.
 
+`--copy` (copies instead of hardlinks, for example to hand a folder to someone as is) and
+`--export-duplicates` stick: `run`, `export`, and the people fixes keep the last export's
+choices, and say so, until `--no-copy` or `--no-export-duplicates` turns them off. They apply
+to the files an export writes; files already in place stay as they are. A dry run saves
+nothing, and `tripsort clean` forgets them with the index.
+
 ### Python API
 
 ```python
@@ -94,11 +111,14 @@ with Project.open("sorted/") as proj:
         print(s.person, [(c.name, c.similarity) for c in s.candidates])
     proj.people.merge("person_07", into="alex")
     proj.people.dismiss("person_09", "alex")  # not alex: stop suggesting it
-    result = proj.export(hardlinks=True, dry_run=False)
+    result = proj.export()  # the folders follow the fixes above
     print(result.summary())
 ```
 
-The methods return plain dataclasses, and the CLI only formats them.
+The methods return plain dataclasses, and the CLI only formats them. The people methods
+change only the index; `export()` moves the folders. Its `hardlinks` and
+`export_duplicates` stick as in the CLI: left out, they are the last export's
+(`proj.export_choices()`, None before the first export).
 
 ## How duplicates are found
 
@@ -158,11 +178,14 @@ person_02, and so on, most photos first.
   tripsort people rename  sorted/ person_03 alex    # name someone, or rename them
   tripsort people merge   sorted/ person_07 alex    # one friend split in two (sunglasses)
   tripsort people dismiss sorted/ person_09 alex    # not alex: keep them apart
-  tripsort export         sorted/                   # moves the links; reads no pixels
   ```
 
-  Names, merges, and dismissed suggestions are kept when you add zips or change a setting:
-  the faces remember whose they are. Splitting a person in two is not possible yet.
+  Each fix exports right away with the last export's choices, so the folders and
+  `manifest.json` follow it at once; the export reads no pixels and prints a short summary.
+  `--no-export` only changes the index, for several fixes in a row, and prints the
+  `tripsort export` command to run at the end. A project that was never exported is left
+  alone. Names, merges, and dismissed suggestions are kept when you add zips or change a
+  setting: the faces remember whose they are. Splitting a person in two is not possible yet.
 - **Friends in the background.** A named friend's face in the background (a smaller face
   behind someone) still puts the photo in their folder, under a stricter similarity, but
   never changes the shot type.
@@ -328,11 +351,13 @@ re-creating the zip.
 - Files you delete from `all/` come back on the next export; files you edit after an export
   are left as they are.
 - tripsort only removes files it wrote itself, for example a copy replaced by a better
-  original, or `duplicates/` when you export without `--export-duplicates`. It never
-  overwrites or deletes a file it did not write.
+  original, or `duplicates/` after `--no-export-duplicates`. It never overwrites or deletes a
+  file it did not write.
 - On drives without hardlinks (exFAT, FAT32), `people/`, `shots/`, `categories/`, and
-  `duplicates/` hold copies; `--copy` forces that.
-- A renamed or merged person's links move to their new folder on the next export.
+  `duplicates/` hold copies; `--copy` forces that, and later exports keep it until
+  `--no-copy`.
+- A renamed or merged person's links move to their new folder right away (on the next
+  export after `--no-export`).
 
 ## Configuration
 
@@ -400,7 +425,7 @@ Changing a threshold needs no re-reading of the zips: faces are found once, at i
 | --- | --- |
 | 0 | Success |
 | 1 | User error: a missing or invalid zip, a bad config value, a bad command line |
-| 2 | Partial success: some files could not be read or decoded (listed in the summary and in `manifest.json`), or some photos could not be scanned for faces or embedded with CLIP (for example, the models could not be downloaded) |
+| 2 | Partial success: some files could not be read or decoded (listed in the summary and in `manifest.json`), or some photos could not be scanned for faces or embedded with CLIP (for example, the models could not be downloaded). The people fixes exit as `export` does, since they export |
 
 ## Privacy
 

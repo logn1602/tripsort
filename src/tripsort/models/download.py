@@ -15,6 +15,7 @@ from pathlib import Path
 
 import platformdirs
 
+from tripsort.commands import command
 from tripsort.errors import ModelError
 from tripsort.models.registry import ModelFile
 from tripsort.progress import NullProgress, Progress
@@ -95,7 +96,8 @@ def download(model: ModelFile, path: Path, progress: Progress | None = None) -> 
         reason = getattr(exc, "reason", None) or exc
         raise ModelError(
             f"could not download {model.filename} ({reason}). tripsort needs it once: "
-            "connect to the internet and run `tripsort models download`, or save the file "
+            f"connect to the internet and run `{command('models download')}`, or save the "
+            "file "
             f"from {model.url} into {path.parent}"
         ) from exc
     except BaseException:

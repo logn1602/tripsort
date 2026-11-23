@@ -1,3 +1,4 @@
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from fake_clip import ColorImageEncoder, NullImageEncoder, WordTextEncoder
 from fake_faces import MarkerFaceAnalyzer, NullFaceAnalyzer
 
 import tripsort.clip.encoder
+import tripsort.commands
 import tripsort.config
 import tripsort.faces.analyzer
 from tripsort.api import Project
@@ -104,6 +106,15 @@ def word_text(monkeypatch: pytest.MonkeyPatch) -> WordTextEncoder:
 def project(tmp_path: Path) -> Iterator[Project]:
     with Project.open(tmp_path / "sorted") as proj:
         yield proj
+
+
+@pytest.fixture
+def uvx(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Messages as after a uvx run without the video extra (test_commands.py checks how a
+    uvx run is recognized). Returns the command prefix they should print."""
+    monkeypatch.setattr(tripsort.commands, "run_by_uvx", lambda: True)
+    monkeypatch.setattr(tripsort.commands, "has_video_extra", lambda: False)
+    return f"uvx --python {sys.version_info.major}.{sys.version_info.minor} tripsort"
 
 
 @pytest.fixture
