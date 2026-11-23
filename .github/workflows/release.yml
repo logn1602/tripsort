@@ -1,7 +1,8 @@
 name: release
 
 # Push a tag such as v0.0.1 on main to release. The tag must match the version in
-# pyproject.toml. Flow: build -> TestPyPI -> install check on every OS -> PyPI.
+# pyproject.toml. Flow: build -> TestPyPI -> install check on every OS -> PyPI -> a fresh
+# `uvx tripsort run` of the demo trip from PyPI on every OS, with freshly downloaded models.
 # Uploads use Trusted Publishing (OIDC), so the repo holds no PyPI tokens.
 
 on:
@@ -114,3 +115,52 @@ jobs:
           path: dist/
 
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  verify-pypi:
+    name: fresh uvx run from PyPI (${{ matrix.os }})
+    needs: publish-pypi
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      # Public-domain and CC0 images from tests/fixtures only (tools/demo_trip.py).
+      - name: Build the demo trip
+        run: uv run tools/demo_trip.py build "$RUNNER_TEMP/demo"
+
+      # PyPI's index can lag a minute behind the upload, so the install is retried.
+      - name: Wait until the release installs from PyPI
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if uvx --refresh --from "tripsort==${version}" tripsort --version; then
+              exit 0
+            fi
+            echo "attempt ${attempt}: tripsort ${version} is not installable yet"
+            sleep 30
+          done
+          echo "::error::tripsort ${version} did not install from PyPI"
+          exit 1
+
+      # No model cache: the face and CLIP models download as on a new computer.
+      - name: Run the release with uvx on the demo trip
+        run: >-
+          uvx --from "tripsort==${GITHUB_REF_NAME#v}" tripsort run
+          "$RUNNER_TEMP/demo/lisa.zip" "$RUNNER_TEMP/demo/george.zip" "$RUNNER_TEMP/demo/pearl.zip"
+          -o "$RUNNER_TEMP/demo/sorted" --refs "$RUNNER_TEMP/demo/refs"
+
+      - name: Check what it sorted
+        run: uv run tools/demo_trip.py check "$RUNNER_TEMP/demo/sorted" "$RUNNER_TEMP/demo"
