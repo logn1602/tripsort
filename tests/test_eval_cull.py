@@ -14,6 +14,20 @@ from test_eval_categories import PROMPTS, SECRET, painted, run
 from eval import labels as labels_module
 from eval.cull_eval import CullRow, ScoredPhoto, cull_report, pick_photos
 
+# The runs below check the evaluation on thresholds fixed here, so tuning the defaults on
+# real photos never moves them.
+PINNED = [
+    f"--set=thresholds.{key}={value}"
+    for key, value in (
+        ("reject_max_sharpness", 15.0),
+        ("reject_max_luma", 20.0),
+        ("reject_min_dark_frac", 0.85),
+        ("reject_min_bright_frac", 0.8),
+        ("reject_max_detail", 100.0),
+        ("burst_tie_sharpness", 0.85),
+    )
+]
+
 
 def scored(
     key: str, tiles: float = 500.0, luma: float = 120.0, bright: float = 0.01
@@ -88,6 +102,7 @@ def test_a_set_gets_culling_labels_and_scores(
     prompts.write_text(PROMPTS, encoding="utf-8")
     work = tmp_path / "work"
     common = ["--labeled-set", flat, "--work", work]
+    cull_args = [*common, *PINNED]
 
     code, _ = run(capsys, "prelabel", *common, "--config", prompts, "--categories-only")
     assert code == 0
@@ -100,7 +115,7 @@ def test_a_set_gets_culling_labels_and_scores(
         writer.writeheader()
         writer.writerows(rows)
 
-    code, out = run(capsys, "cull-prelabel", *common)
+    code, out = run(capsys, "cull-prelabel", *cull_args)
     assert code == 0
     made = json.loads(out)
     assert (made["dev_photos"], made["photos"], made["bursts"]) == (13, 13, 1)
@@ -124,13 +139,13 @@ def test_a_set_gets_culling_labels_and_scores(
         writer.writeheader()
         writer.writerows(labels)
 
-    code, out = run(capsys, "cull", *common)
+    code, out = run(capsys, "cull", *cull_args)
     assert code == 0
     report = json.loads(out)
     assert report["dev_rejects"] == {"blurry": 1, "dark": 1}
     assert (report["precision"], report["recall_estimate"]) == (1.0, 1.0)
     assert report["burst_agreement"] == 1.0
-    assert report["settings"]["reject_max_sharpness"] == 15.0
+    assert report["settings"]["reject_max_sharpness"] == 15.0  # PINNED reached the run
 
 
 @pytest.mark.cull
@@ -152,9 +167,9 @@ def test_a_fresh_trip_gets_a_review_sample(
     save("kind_dark.jpg", Image.new("RGB", (640, 480), (2, 2, 2)), "09:30:00")
     for i in range(3):
         save(f"kind_burst_{i}.jpg", painted("animals", 20 + i), f"08:00:0{i}")
-    common = ["--labeled-set", flat, "--work", tmp_path / "work", "--review"]
+    cull_args = ["--labeled-set", flat, "--work", tmp_path / "work", "--review", *PINNED]
 
-    code, out = run(capsys, "cull-prelabel", *common)
+    code, out = run(capsys, "cull-prelabel", *cull_args)
     assert code == 0
     assert SECRET not in out
     made = json.loads(out)
@@ -174,7 +189,7 @@ def test_a_fresh_trip_gets_a_review_sample(
         writer.writeheader()
         writer.writerows(labels)
 
-    code, out = run(capsys, "cull", *common)
+    code, out = run(capsys, "cull", *cull_args)
     assert code == 0
     report = json.loads(out)
     assert report["dev_rejects"] == {"blurry": 1, "dark": 1}

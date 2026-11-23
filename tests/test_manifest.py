@@ -87,10 +87,10 @@ def test_schema(project: Project, trip: dict[str, Path]) -> None:
         "burst_window_seconds": 10.0,
         "reject_max_sharpness": 0.0,  # rejects are off in tests (conftest.py)
         "reject_max_luma": 0.0,
-        "reject_min_dark_frac": 0.85,
+        "reject_min_dark_frac": 0.5,
         "reject_min_bright_frac": 1.0,
-        "reject_max_detail": 100.0,
-        "burst_tie_sharpness": 0.85,
+        "reject_max_detail": 1500.0,
+        "burst_tie_sharpness": 0.95,
     }
     for entry in manifest["files"]:
         assert set(entry) == set(FILE_FIELDS)

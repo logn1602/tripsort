@@ -84,21 +84,21 @@ def test_reject_rules_are_strict_and_say_why() -> None:
     t = load_config().thresholds
     assert reject_reason(scores(), t) is None
     assert reject_reason(scores(sharp_tiles=5.0), t) == "blurry"
-    assert reject_reason(scores(sharp_tiles=40.0), t) is None  # soft, not blurry
+    assert reject_reason(scores(sharp_tiles=120.0), t) is None  # soft, not blurry
     black = scores(sharp_tiles=2.0, luma_mean=4.0, dark_frac=0.97)
     assert reject_reason(black, t) == "dark"  # no detail either, but dark says why
-    night = scores(sharp_tiles=400.0, luma_mean=12.0, dark_frac=0.9)  # lights in the dark
+    night = scores(sharp_tiles=2500.0, luma_mean=12.0, dark_frac=0.9)  # sharp lights in the dark
     assert reject_reason(night, t) is None
     white = scores(sharp_tiles=3.0, luma_mean=250.0, bright_frac=0.95)
     assert reject_reason(white, t) == "blown_out"
-    screenshot = scores(sharp_tiles=900.0, luma_mean=235.0, bright_frac=0.9)  # text on white
+    screenshot = scores(sharp_tiles=3000.0, luma_mean=235.0, bright_frac=0.9)  # text on white
     assert reject_reason(screenshot, t) is None
 
 
 @pytest.mark.cull
 def test_the_best_shot_of_a_burst() -> None:
     t = load_config().thresholds
-    s = {1: scores(sharp_tiles=1000.0), 2: scores(sharp_tiles=950.0), 3: scores(sharp_tiles=400.0)}
+    s = {1: scores(sharp_tiles=1000.0), 2: scores(sharp_tiles=970.0), 3: scores(sharp_tiles=400.0)}
     assert best_shot([1, 2, 3], s, {}, Counter(), t) == 1  # 1 and 2 tie on sharpness; 1 is sharper
     assert rank_shots([1, 2, 3], s, {}, Counter(), t) == [1, 2, 3]  # the whole ranking
     assert rank_shots([1, 2, 3], s, {1: "blurry"}, Counter(), t) == [2, 3, 1]
@@ -106,7 +106,7 @@ def test_the_best_shot_of_a_burst() -> None:
     faces = Counter({2: 3, 1: 2})
     assert best_shot([1, 2, 3], s, {}, faces, t) == 2  # tied on sharpness, more faces
     assert best_shot([1, 2, 3], s, {1: "blurry", 2: "dark"}, faces, t) == 3  # rejects last
-    s[2] = scores(sharp_tiles=950.0, bright_frac=0.3)
+    s[2] = scores(sharp_tiles=970.0, bright_frac=0.3)
     assert best_shot([1, 2, 3], s, {}, faces, t) == 1  # less clipping beats more faces
     assert best_shot([4, 1], s, {}, Counter(), t) == 1  # a shot without scores ranks last
     assert best_shot([4, 5], s, {}, Counter(), t) == 4  # none has scores: the first shot
