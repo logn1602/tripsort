@@ -34,6 +34,7 @@ from tripsort.clip.categorize import CategoryStats
 from tripsort.clip.store import pending_clip_scans
 from tripsort.clip.types import CLIP_MODEL_ID, ImageEncoder, TextEncoder
 from tripsort.config import OTHER, Config, load_config
+from tripsort.cull.analysis import CullStats
 from tripsort.dedupe.copies import rebuild_copy_groups
 from tripsort.errors import ModelError, UserError, ZipError
 from tripsort.export.manifest import write_manifest
@@ -86,6 +87,9 @@ class AnalyzeResult:
     folder: Path | None = None  # the project folder
     categories: CategoryStats = field(default_factory=CategoryStats)
     bursts: BurstStats = field(default_factory=BurstStats)
+    culling: CullStats = field(default_factory=CullStats)
+    live_photos: int = 0  # Live Photo motion clips paired with their stills
+    videos_with_people: int = 0
 
     def summary(self, project: str | None = None) -> str:
         """The summary. ``project`` is how its commands name the project folder, such as the
@@ -118,12 +122,17 @@ class AnalyzeResult:
                 f"{count(s.read_failures, 'zip entry', 'zip entries')} could not be read "
                 "(see the messages above and manifest.json)."
             )
-        lines.extend(_category_lines(self.categories, self.bursts))
+        lines.extend(_category_lines(self.categories, self.bursts, self.culling))
+        if self.live_photos:
+            lines.append(
+                f"Paired {count(self.live_photos, 'Live Photo')}: each motion clip goes next to "
+                "its still in all/, and nowhere else."
+            )
         lines.extend(_people_lines(self.people, project))
         return "\n".join(lines)
 
 
-def _category_lines(c: CategoryStats, b: BurstStats) -> list[str]:
+def _category_lines(c: CategoryStats, b: BurstStats, q: CullStats) -> list[str]:
     lines = []
     if c.problem:
         lines.append(f"Categories were not scored: {c.problem}")
@@ -134,6 +143,12 @@ def _category_lines(c: CategoryStats, b: BurstStats) -> list[str]:
             f"{', '.join(sorted_into) if sorted_into else 'none fits one'}; "
             f"{c.photos.get(OTHER, 0):,} other."
         )
+    if any(c.videos.values()):
+        held = [f"{n:,} {label}" for label, n in c.videos.items() if label != OTHER and n]
+        lines.append(
+            f"Sorted {count(sum(c.videos.values()), 'video')} by category: "
+            f"{', '.join(held) if held else 'none fits one'}; {c.videos.get(OTHER, 0):,} other."
+        )
     if c.not_embedded:
         lines.append(
             f"{count(c.not_embedded, 'photo')} without a CLIP embedding yet "
@@ -141,8 +156,28 @@ def _category_lines(c: CategoryStats, b: BurstStats) -> list[str]:
         )
     if b.bursts:
         lines.append(
-            f"Found {count(b.bursts, 'burst')} ({count(b.photos, 'photo')}); every shot stays "
-            "in all/."
+            f"Found {count(b.bursts, 'burst')} ({count(b.photos, 'photo')}); the best shot of "
+            "each goes to the people, shot, and category folders, every shot stays in all/, "
+            "and bursts/ shows them side by side."
+        )
+    if rejected := sum(q.rejects.values()):
+        reasons = ", ".join(
+            f"{n:,} {reason.replace('_', ' ')}" for reason, n in q.rejects.items() if n
+        )
+        if q.hidden:
+            lines.append(
+                f"{count(rejected, 'photo')} flagged as rejects ({reasons}): they stay in all/ "
+                "and go to rejects/, not the people, shot, or category folders."
+            )
+        else:
+            lines.append(
+                f"{count(rejected, 'photo')} flagged as rejects ({reasons}): rejects/ lists them "
+                "to check, and they stay in their folders (hide_rejects = true leaves them out)."
+            )
+    if q.not_scored:
+        lines.append(
+            f"{count(q.not_scored, 'photo')} without sharpness and exposure scores yet; "
+            "`tripsort ingest` on this project scores them."
         )
     return lines
 
@@ -255,7 +290,12 @@ class Project:
 
         with self._run("ingest") as run:
             result = ingest_zips(
-                self._conn, paths, progress=progress, faces=load_faces, clip=load_clip
+                self._conn,
+                paths,
+                progress=progress,
+                faces=load_faces,
+                clip=load_clip,
+                video=self.config.video,
             )
             result.face_problem = face_problem[0] if face_problem else None
             result.faces_pending = pending_scans(
@@ -275,7 +315,10 @@ class Project:
         loads only for prompts whose embeddings are neither shipped nor cached."""
         from tripsort.clip.bursts import analyze_bursts
         from tripsort.clip.categorize import analyze_categories
+        from tripsort.cull.analysis import analyze_culling
         from tripsort.faces.analysis import analyze_people  # pulls in scikit-learn
+        from tripsort.video.live_photos import analyze_live_photos
+        from tripsort.video.people import analyze_video_people
 
         with self._run("analyze") as run:
             started = time.perf_counter()
@@ -283,10 +326,13 @@ class Project:
             rebuild_copy_groups(self._conn, self.config.thresholds)
             try:
                 with transaction(self._conn):
+                    live_photos = analyze_live_photos(self._conn, self.config.video)
                     # categories first: the shot types use their selfie hint
                     categories = analyze_categories(self._conn, self.config, self.text_encoder)
                     people = analyze_people(self._conn, self.config.people)
+                    in_videos = analyze_video_people(self._conn, self.config)
                     bursts = analyze_bursts(self._conn, self.config.thresholds)
+                    culling = analyze_culling(self._conn, self.config)
             finally:
                 self._text = None  # the text encoder is only needed for new prompts
             set_meta(self._conn, "analysis_state", self._analysis_state())
@@ -301,6 +347,9 @@ class Project:
             self.folder,
             categories,
             bursts,
+            culling,
+            live_photos,
+            in_videos.videos,
         )
 
     def text_encoder(self, progress: Progress | None = None) -> "TextEncoder":
@@ -335,6 +384,7 @@ class Project:
                 hardlinks=hardlinks,
                 dry_run=dry_run,
                 export_duplicates=export_duplicates,
+                hide_rejects=self.config.thresholds.hide_rejects,
                 progress=progress,
             )
             if not dry_run:

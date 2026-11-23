@@ -7,6 +7,7 @@ from fake_clip import ColorImageEncoder, NullImageEncoder, WordTextEncoder
 from fake_faces import MarkerFaceAnalyzer, NullFaceAnalyzer
 
 import tripsort.clip.encoder
+import tripsort.config
 import tripsort.faces.analyzer
 from tripsort.api import Project
 from tripsort.models.download import model_status
@@ -33,6 +34,21 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
             for name, value in getattr(report, "user_properties", ()):
                 if name == "summary":
                     terminalreporter.write_line(str(value))
+
+
+@pytest.fixture(autouse=True)
+def _no_rejects(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The generated test photos are flat colors, which the reject rules call blurry, so
+    rejects are off unless a test is marked `cull`."""
+    if request.node.get_closest_marker("cull"):
+        return
+    off = {"reject_max_sharpness": "0.0", "reject_max_luma": "0.0", "reject_min_bright_frac": "1.0"}
+    lines = []
+    for line in tripsort.config.default_config_text().splitlines():
+        key = line.split("=")[0].strip()
+        lines.append(f"{key} = {off[key]}" if key in off else line)
+    text = "\n".join(lines) + "\n"
+    monkeypatch.setattr(tripsort.config, "default_config_text", lambda: text)
 
 
 @pytest.fixture(autouse=True)

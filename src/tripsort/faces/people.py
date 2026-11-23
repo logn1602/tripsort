@@ -33,6 +33,7 @@ class PersonInfo:
     photos: int
     solo: int  # photos where they are the only foreground face
     faces: int
+    videos: int = 0  # videos they are in (matched in enough sampled frames)
 
 
 @dataclass
@@ -234,10 +235,12 @@ def person_infos(conn: sqlite3.Connection, person_id: int | None = None) -> list
     """Every person (or one), with their photo and face counts as of the last analysis."""
     where = "WHERE p.id = ?" if person_id is not None else ""
     rows = conn.execute(
-        "SELECT p.number, p.name, p.named_by, COUNT(DISTINCT f.media_id), "
+        "SELECT p.number, p.name, p.named_by, "
+        "COUNT(DISTINCT CASE WHEN f.frame_ts = -1 THEN f.media_id END), "
         "COUNT(DISTINCT CASE WHEN m.shot = 'solo' AND f.match != 'background' "
-        "                    THEN f.media_id END), "
-        "COUNT(f.id) FROM people p "
+        "                    AND f.frame_ts = -1 THEN f.media_id END), "
+        "COUNT(CASE WHEN f.frame_ts = -1 THEN f.id END), "
+        "COUNT(DISTINCT CASE WHEN f.frame_ts >= 0 THEN f.media_id END) FROM people p "
         "LEFT JOIN faces f ON f.person_id = p.id AND f.match IS NOT NULL "
         f"LEFT JOIN media m ON m.id = f.media_id {where} "
         "GROUP BY p.id, p.number, p.name, p.named_by",
@@ -251,6 +254,7 @@ def person_infos(conn: sqlite3.Connection, person_id: int | None = None) -> list
             photos=int(photos),
             solo=int(solo),
             faces=int(faces),
+            videos=int(videos),
         )
-        for number, name, named_by, photos, solo, faces in rows
+        for number, name, named_by, photos, solo, faces, videos in rows
     ]

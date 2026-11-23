@@ -46,6 +46,16 @@ _RANGES: dict[str, tuple[float, float]] = {
     "category_face_height": (0.0, 1.0),
     "burst_similarity": (-1.0, 1.0),
     "burst_window_seconds": (0.0, 3600.0),
+    "reject_max_sharpness": (0.0, 100_000.0),
+    "reject_max_luma": (0.0, 255.0),
+    "reject_min_dark_frac": (0.0, 1.0),
+    "reject_min_bright_frac": (0.0, 1.0),
+    "reject_max_detail": (0.0, 100_000.0),
+    "burst_tie_sharpness": (0.0, 1.0),
+    "frame_every_seconds": (0.1, 3600.0),
+    "max_frames": (1, 1000),
+    "live_photo_max_seconds": (0.0, 60.0),
+    "person_min_frames": (1, 1000),
 }
 # Allowed values for each text setting.
 _CHOICES: dict[str, tuple[str, ...]] = {"cluster_method": CLUSTER_METHODS}
@@ -63,6 +73,13 @@ class Thresholds:
     category_face_height: float
     burst_similarity: float
     burst_window_seconds: float
+    reject_max_sharpness: float
+    reject_max_luma: float
+    reject_min_dark_frac: float
+    reject_min_bright_frac: float
+    reject_max_detail: float
+    hide_rejects: bool  # off: rejects stay in people/, shots/, categories/; rejects/ lists them
+    burst_tie_sharpness: float
 
 
 @dataclass(frozen=True)
@@ -87,11 +104,23 @@ class PeopleSettings:
 
 
 @dataclass(frozen=True)
+class VideoSettings:
+    """How videos are sampled (at ingest) and read (in ``analyze``)."""
+
+    frame_every_seconds: float
+    max_frames: int
+    live_photo_max_seconds: float
+    person_min_frames: int
+    match_people: bool  # off: videos get no people, so they stay out of people/
+
+
+@dataclass(frozen=True)
 class Config:
     """The effective configuration of a project."""
 
     thresholds: Thresholds
     people: PeopleSettings
+    video: VideoSettings
     categories: dict[str, tuple[str, ...]]  # name -> prompts, in config order; has OTHER
 
     def to_dict(self) -> dict[str, Any]:
@@ -171,7 +200,11 @@ def _check_value(where: str, key: str, value: Any, default: Any) -> None:
             allowed = ", ".join(f'"{c}"' for c in choices)
             raise ConfigError(f"{where} must be one of {allowed}, got {value!r}")
         return
-    if isinstance(default, bool) or isinstance(value, bool):
+    if isinstance(default, bool):
+        if not isinstance(value, bool):
+            raise ConfigError(f"{where} must be true or false, got {value!r}")
+        return
+    if isinstance(value, bool):
         raise ConfigError(f"{where} must be a number")
     if isinstance(default, int) and not isinstance(value, int):
         raise ConfigError(f"{where} must be a whole number, got {value!r}")
@@ -229,6 +262,7 @@ def _build(data: dict[str, Any], where: str) -> Config:
         return Config(
             thresholds=_section(Thresholds, data["thresholds"]),
             people=_section(PeopleSettings, data["people"]),
+            video=_section(VideoSettings, data["video"]),
             categories=categories,
         )
     except (KeyError, TypeError, ValueError) as exc:  # pragma: no cover - packaged file is tested

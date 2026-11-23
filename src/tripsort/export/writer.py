@@ -42,10 +42,22 @@ DUPLICATES_DIR = "duplicates"
 PEOPLE_DIR = "people"
 SHOTS_DIR = "shots"
 CATEGORIES_DIR = "categories"
+REJECTS_DIR = "rejects"
+BURSTS_DIR = "bursts"
 SHOT_FOLDERS = ("solo", "group", "selfie")
 TMP_SUFFIX = ".tripsort-tmp"
-_MANAGED_DIRS = (ALL_DIR, UNREADABLE_DIR, DUPLICATES_DIR, PEOPLE_DIR, SHOTS_DIR, CATEGORIES_DIR)
-_LINK_ROLES = frozenset({"dup_keeper", "person", "shot", "category"})  # hardlinks into all/
+_MANAGED_DIRS = (
+    ALL_DIR,
+    UNREADABLE_DIR,
+    DUPLICATES_DIR,
+    PEOPLE_DIR,
+    SHOTS_DIR,
+    CATEGORIES_DIR,
+    REJECTS_DIR,
+    BURSTS_DIR,
+)
+# hardlinks into all/
+_LINK_ROLES = frozenset({"dup_keeper", "person", "shot", "category", "reject", "burst"})
 _SPACE_MARGIN = 64 * 1024 * 1024
 _COMMIT_EVERY = 50
 
@@ -81,7 +93,7 @@ class _Record:
 @dataclass
 class _Wanted:
     media: _Media
-    role: str  # 'all', 'unreadable', 'dup_keeper', 'dup_copy', 'person', 'shot'
+    role: str  # 'all', 'unreadable', 'dup_keeper', 'dup_copy', 'person', 'shot', ...
     folder: str
     name: str
     link_to: str | None = None  # for the link roles: the all/ file to link
@@ -116,6 +128,10 @@ class ExportResult:
     people_folders: int = 0
     shots: dict[str, int] = field(default_factory=dict)  # 'solo', 'group', 'selfie' -> files
     categories: dict[str, int] = field(default_factory=dict)  # category -> files
+    rejects: dict[str, int] = field(default_factory=dict)  # reason -> files in rejects/
+    rejects_hidden: bool = False  # rejects left out of people/, shots/, and categories/
+    bursts: int = 0  # folders in bursts/
+    burst_people: int = 0  # people/ links to a burst shot that is not its best
     manifest: Path | None = None
     peak_rss_bytes: int | None = None
 
@@ -137,6 +153,31 @@ class ExportResult:
         if any(self.categories.values()):
             held = ", ".join(f"{n:,} {name}" for name, n in self.categories.items() if n)
             lines.append(f"categories/ holds {held}.")
+        if rejected := sum(self.rejects.values()):
+            reasons = ", ".join(
+                f"{n:,} {reason.replace('_', ' ')}" for reason, n in self.rejects.items() if n
+            )
+            if self.rejects_hidden:
+                lines.append(
+                    f"rejects/ holds {count(rejected, 'file')} ({reasons}), left out of people/, "
+                    "shots/, and categories/."
+                )
+            else:
+                lines.append(
+                    f"rejects/ lists {count(rejected, 'file')} ({reasons}) to check; they stay "
+                    "in people/, shots/, and categories/ too."
+                )
+        if self.bursts:
+            line = (
+                f"bursts/ shows {count(self.bursts, 'burst')} shot by shot; the best_ one is "
+                "the one in people/, shots/, and categories/"
+            )
+            if self.burst_people:
+                line += (
+                    f"; people/ also holds {count(self.burst_people, 'other shot')} of "
+                    "bursts, each the best shot of someone the best_ one leaves out"
+                )
+            lines.append(line + ".")
         if self.near_copies:
             where = (
                 "duplicates/ shows each one next to the file that was kept"
@@ -148,8 +189,7 @@ class ExportResult:
             lines.append(f"{left_out} {verb_was} left out of all/; {where}.")
         if self.link_fallbacks:
             lines.append(
-                "This drive does not support hardlinks, so people/, shots/, categories/, and "
-                "duplicates/ hold copies."
+                "This drive does not support hardlinks, so the folders besides all/ hold copies."
             )
         if self.left_alone:
             lines.append(
@@ -169,8 +209,11 @@ def export_files(
     hardlinks: bool = True,
     dry_run: bool = False,
     export_duplicates: bool = False,
+    hide_rejects: bool = False,
     progress: Progress | None = None,
 ) -> ExportResult:
+    """``hide_rejects`` leaves rejects out of people/, shots/, and categories/; either way
+    rejects/ lists them."""
     started = time.perf_counter()
     progress = progress or NullProgress()
     media = _load_media(conn)
@@ -179,6 +222,8 @@ def export_files(
     copy_ids = {c for copies in copies_by_keeper.values() for c in copies}
     records = _load_records(conn)
     planner = _Planner(project_dir, records)
+    live = _load_live_photos(conn)  # motion clip -> its still
+    keeper_of = {c: k for k, copies in copies_by_keeper.items() for c in copies}
 
     by_date = sorted(
         (m for m in media.values() if m.id in occurrences),
@@ -186,11 +231,22 @@ def export_files(
     )
     all_relpath: dict[int, str] = {}
     for m in by_date:
+        if m.id in live:
+            continue  # named after its still, below
         name = _name_for(m, occurrences[m.id])
         if m.status == "unreadable":
             planner.want(_Wanted(m, "unreadable", UNREADABLE_DIR, name))
         elif m.id not in copy_ids:
             all_relpath[m.id] = planner.want(_Wanted(m, "all", ALL_DIR, name)).relpath
+    for m in by_date:  # a Live Photo's motion clip sits next to its still, with its name
+        if m.id not in live or m.id in copy_ids:
+            continue
+        still = live[m.id]
+        still_rel = all_relpath.get(keeper_of.get(still, still))
+        name = _name_for(m, occurrences[m.id])
+        if still_rel is not None:
+            name = split_extension(PurePosixPath(still_rel).name)[0] + split_extension(name)[1]
+        all_relpath[m.id] = planner.want(_Wanted(m, "all", ALL_DIR, name)).relpath
     if export_duplicates:
         for keeper_id in sorted(copies_by_keeper, key=lambda k: all_relpath.get(k, "")):
             keeper_rel = all_relpath.get(keeper_id)
@@ -208,17 +264,41 @@ def export_files(
     people = _load_people_folders(conn)
     shots = _load_shot_folders(conn)
     categories = _load_category_folders(conn)
+    rejects = _load_rejects(conn)
+    hidden_rejects = rejects if hide_rejects else {}
+    bursts = _load_bursts(conn)
+    hidden = set(hidden_rejects) | set(live)  # left out of people/, shots/, and categories/
+    for burst in bursts:
+        hidden.update(s for s in burst.shots if s != burst.best)
+    own_best = _own_best_shots(bursts, people, hidden_rejects, set(all_relpath))
     for m in by_date:
         rel = all_relpath.get(m.id)
         if rel is None:
             continue
         name = PurePosixPath(rel).name
+        if (reason := rejects.get(m.id)) is not None:
+            planner.want(_Wanted(m, "reject", f"{REJECTS_DIR}/{reason}", name, rel))
+        if m.id in hidden:  # a burst shot may still be someone's own best shot of it
+            for person in own_best.get(m.id, ()):
+                planner.want(_Wanted(m, "person", f"{PEOPLE_DIR}/{person}", name, rel))
+            continue
         for person in people.get(m.id, ()):
             planner.want(_Wanted(m, "person", f"{PEOPLE_DIR}/{person}", name, rel))
         for shot in shots.get(m.id, ()):
             planner.want(_Wanted(m, "shot", f"{SHOTS_DIR}/{shot}", name, rel))
         if (category := categories.get(m.id)) is not None:
             planner.want(_Wanted(m, "category", f"{CATEGORIES_DIR}/{category}", name, rel))
+    burst_folders = 0
+    for burst in bursts:
+        rels = [(s, all_relpath[s]) for s in burst.shots if s in all_relpath]
+        if len(rels) < 2:
+            continue
+        burst_folders += 1
+        folder = f"{BURSTS_DIR}/{split_extension(PurePosixPath(rels[0][1]).name)[0]}"
+        for burst_shot, rel in rels:
+            name = PurePosixPath(rel).name
+            name = f"best_{name}" if burst_shot == burst.best else name
+            planner.want(_Wanted(media[burst_shot], "burst", folder, name, rel))
 
     wanted = planner.wanted
     stale = [record for relpath, record in records.items() if relpath not in planner.claimed]
@@ -250,6 +330,12 @@ def export_files(
                 Counter(w.folder.split("/", 1)[1] for w in wanted if w.role == "category").items()
             )
         ),
+        rejects=dict(
+            sorted(Counter(w.folder.split("/", 1)[1] for w in wanted if w.role == "reject").items())
+        ),
+        rejects_hidden=hide_rejects,
+        bursts=burst_folders,
+        burst_people=sum(len(folders) for folders in own_best.values()),
     )
     if dry_run:
         result.seconds = time.perf_counter() - started
@@ -660,6 +746,85 @@ def _load_people_folders(conn: sqlite3.Connection) -> dict[int, list[str]]:
     ):
         found[int(media_id)].add(person_folder(display_name(int(number), name)))
     return {media_id: sorted(folders) for media_id, folders in found.items()}
+
+
+def _load_rejects(conn: sqlite3.Connection) -> dict[int, str]:
+    """media id -> why it is a reject (blurry, dark, blown_out)."""
+    return {
+        int(media_id): str(reason)
+        for media_id, reason in conn.execute(
+            "SELECT media_id, reject FROM quality WHERE reject IS NOT NULL"
+        )
+    }
+
+
+@dataclass(frozen=True)
+class _Burst:
+    best: int | None  # None before analyze picks one
+    shots: list[int]  # in time order
+    ranked: list[int]  # best first (in time order before analyze ranks them)
+
+
+def _load_bursts(conn: sqlite3.Connection) -> list[_Burst]:
+    """Every burst, with its best shot and its shots in time order and in rank order."""
+    shots: defaultdict[int, list[tuple[str, int, int, int | None]]] = defaultdict(list)
+    for group_id, media_id, is_keeper, rank, taken_at in conn.execute(
+        "SELECT gm.group_id, gm.media_id, gm.is_keeper, gm.shot_rank, m.taken_at "
+        "FROM group_members gm JOIN media_groups g ON g.id = gm.group_id "
+        "JOIN media m ON m.id = gm.media_id WHERE g.kind = 'burst'"
+    ):
+        shots[int(group_id)].append(
+            (
+                str(taken_at or ""),
+                int(media_id),
+                int(is_keeper),
+                None if rank is None else int(rank),
+            )
+        )
+    bursts = []
+    for group_id in sorted(shots):
+        ordered = sorted(shots[group_id], key=lambda shot: shot[:2])
+        ranked = sorted(ordered, key=lambda shot: (shot[3] is None, shot[3] or 0))
+        bursts.append(
+            _Burst(
+                best=next((shot[1] for shot in ordered if shot[2]), None),
+                shots=[shot[1] for shot in ordered],
+                ranked=[shot[1] for shot in ranked],
+            )
+        )
+    return bursts
+
+
+def _own_best_shots(
+    bursts: list[_Burst],
+    people: dict[int, list[str]],
+    rejects: dict[int, str],
+    exported: set[int],
+) -> dict[int, list[str]]:
+    """Burst shot -> the people/ folders it goes in although it is not its burst's best
+    shot: everyone the best shot leaves out gets their own best shot of the burst, the
+    first in the burst's ranking that shows them and is not in ``rejects`` (the hidden
+    rejects: none unless hide_rejects is on)."""
+    found: defaultdict[int, list[str]] = defaultdict(list)
+    for burst in bursts:
+        best = burst.best
+        covered = set(people.get(best, ())) if best is not None and best not in rejects else set()
+        for shot in burst.ranked:
+            if shot == best or shot in rejects or shot not in exported:
+                continue
+            for person in people.get(shot, ()):
+                if person not in covered:
+                    covered.add(person)
+                    found[shot].append(person)
+    return dict(found)
+
+
+def _load_live_photos(conn: sqlite3.Connection) -> dict[int, int]:
+    """A Live Photo's motion clip -> its still."""
+    return {
+        int(motion): int(still)
+        for motion, still in conn.execute("SELECT motion_id, still_id FROM live_photos")
+    }
 
 
 def _load_shot_folders(conn: sqlite3.Connection) -> dict[int, list[str]]:

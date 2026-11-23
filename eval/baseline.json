@@ -1768,6 +1768,166 @@
       "tripsort_version": "0.1.0"
     }
   },
+  "cull": {
+    "extra_cull_dev": {
+      "burst_agreement": null,
+      "bursts_any": 0,
+      "bursts_labeled": 0,
+      "dev_photos": 57,
+      "dev_rejects": {
+        "dark": 1
+      },
+      "flagged_labeled": 1,
+      "flagged_not_labeled": 0,
+      "labels": {
+        "blurry": 4,
+        "dark": 7,
+        "ok": 46
+      },
+      "labels_weighted": {
+        "blown_out": 0,
+        "blurry": 4.0,
+        "dark": 7.0,
+        "ok": 46.0
+      },
+      "per_reason": {
+        "blown_out": {
+          "flagged": 0,
+          "labeled_bad": 0,
+          "labeled_this_reason": 0
+        },
+        "blurry": {
+          "flagged": 0,
+          "labeled_bad": 0,
+          "labeled_this_reason": 0
+        },
+        "dark": {
+          "flagged": 1,
+          "labeled_bad": 1,
+          "labeled_this_reason": 1
+        }
+      },
+      "photos_labeled": 57,
+      "precision": 1.0,
+      "recall_estimate": 0.0909,
+      "settings": {
+        "burst_tie_sharpness": 0.95,
+        "reject_max_detail": 1500.0,
+        "reject_max_luma": 50.0,
+        "reject_max_sharpness": 75.0,
+        "reject_min_bright_frac": 0.3,
+        "reject_min_dark_frac": 0.5
+      },
+      "tripsort_version": "0.3.0"
+    },
+    "private_cull_dev": {
+      "burst_agreement": 0.8293,
+      "bursts_any": 28,
+      "bursts_labeled": 41,
+      "dev_photos": 358,
+      "dev_rejects": {
+        "blown_out": 1,
+        "blurry": 1,
+        "dark": 3
+      },
+      "flagged_labeled": 5,
+      "flagged_not_labeled": 0,
+      "labels": {
+        "blown_out": 5,
+        "blurry": 8,
+        "dark": 15,
+        "ok": 113
+      },
+      "labels_weighted": {
+        "blown_out": 5.0,
+        "blurry": 12.3,
+        "dark": 15.0,
+        "ok": 325.7
+      },
+      "per_reason": {
+        "blown_out": {
+          "flagged": 1,
+          "labeled_bad": 1,
+          "labeled_this_reason": 1
+        },
+        "blurry": {
+          "flagged": 1,
+          "labeled_bad": 1,
+          "labeled_this_reason": 1
+        },
+        "dark": {
+          "flagged": 3,
+          "labeled_bad": 3,
+          "labeled_this_reason": 3
+        }
+      },
+      "photos_labeled": 141,
+      "precision": 1.0,
+      "recall_estimate": 0.1546,
+      "settings": {
+        "burst_tie_sharpness": 0.95,
+        "reject_max_detail": 1500.0,
+        "reject_max_luma": 50.0,
+        "reject_max_sharpness": 75.0,
+        "reject_min_bright_frac": 0.3,
+        "reject_min_dark_frac": 0.5
+      },
+      "tripsort_version": "0.3.0"
+    },
+    "private_cull_review": {
+      "burst_agreement": 0.825,
+      "bursts_any": 25,
+      "bursts_labeled": 40,
+      "dev_photos": 880,
+      "dev_rejects": {
+        "blown_out": 5,
+        "blurry": 10,
+        "dark": 11
+      },
+      "flagged_labeled": 26,
+      "flagged_not_labeled": 0,
+      "labels": {
+        "blurry": 9,
+        "dark": 6,
+        "ok": 61
+      },
+      "labels_weighted": {
+        "blown_out": 0,
+        "blurry": 9.0,
+        "dark": 38.2,
+        "ok": 832.8
+      },
+      "per_reason": {
+        "blown_out": {
+          "flagged": 5,
+          "labeled_bad": 1,
+          "labeled_this_reason": 0
+        },
+        "blurry": {
+          "flagged": 10,
+          "labeled_bad": 4,
+          "labeled_this_reason": 3
+        },
+        "dark": {
+          "flagged": 11,
+          "labeled_bad": 8,
+          "labeled_this_reason": 3
+        }
+      },
+      "photos_labeled": 76,
+      "precision": 0.5,
+      "recall_estimate": 0.2757,
+      "settings": {
+        "burst_tie_sharpness": 0.95,
+        "reject_max_detail": 1500.0,
+        "reject_max_luma": 50.0,
+        "reject_max_sharpness": 75.0,
+        "reject_min_bright_frac": 0.3,
+        "reject_min_dark_frac": 0.5
+      },
+      "tripsort_version": "0.3.0"
+    }
+  },
   "dedupe": {
     "generated_150_photos_12mp": {
       "copies": 771,
@@ -2937,6 +3097,418 @@
         "with_two_candidates": 0
       },
       "tripsort_version": "0.1.0a3"
+    }
+  },
+  "videos": {
+    "private_videos_dev": {
+      "categories": {
+        "accuracy": 0.9559,
+        "confusion": {
+          "labels": [
+            "scenery",
+            "animals",
+            "food",
+            "documents",
+            "other"
+          ],
+          "rows_labeled_columns_predicted": [
+            [
+              4,
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              5,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              4,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              2,
+              0
+            ],
+            [
+              0,
+              2,
+              0,
+              0,
+              50
+            ]
+          ]
+        },
+        "labeled_categories": [
+          "scenery",
+          "animals",
+          "food",
+          "documents"
+        ],
+        "macro_f1_labeled": 0.9145,
+        "per_category": {
+          "animals": {
+            "f1": 0.7692,
+            "precision": 0.625,
+            "predicted": 8,
+            "recall": 1.0,
+            "right": 5,
+            "support": 5
+          },
+          "documents": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 2,
+            "recall": 1.0,
+            "right": 2,
+            "support": 2
+          },
+          "food": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 4,
+            "recall": 1.0,
+            "right": 4,
+            "support": 4
+          },
+          "other": {
+            "f1": 0.9804,
+            "precision": 1.0,
+            "predicted": 50,
+            "recall": 0.9615,
+            "right": 50,
+            "support": 52
+          },
+          "scenery": {
+            "f1": 0.8889,
+            "precision": 1.0,
+            "predicted": 4,
+            "recall": 0.8,
+            "right": 4,
+            "support": 5
+          }
+        },
+        "photos": 68,
+        "wrong_photos": {}
+      },
+      "checked_rows": 68,
+      "labeled_names_without_a_ref": 18,
+      "people": {
+        "macro": {
+          "precision": 1.0,
+          "recall": 0.1066
+        },
+        "micro": {
+          "precision": 1.0,
+          "recall": 0.1
+        },
+        "per_person": [
+          {
+            "matched": true,
+            "person": "p1",
+            "photos": 19,
+            "precision": 1.0,
+            "recall": 0.1053
+          },
+          {
+            "matched": true,
+            "person": "p2",
+            "photos": 10,
+            "precision": 1.0,
+            "recall": 0.1
+          },
+          {
+            "matched": true,
+            "person": "p3",
+            "photos": 11,
+            "precision": 1.0,
+            "recall": 0.0909
+          },
+          {
+            "matched": true,
+            "person": "p4",
+            "photos": 14,
+            "precision": 1.0,
+            "recall": 0.0714
+          },
+          {
+            "matched": true,
+            "person": "p5",
+            "photos": 16,
+            "precision": 1.0,
+            "recall": 0.0625
+          },
+          {
+            "matched": true,
+            "person": "p6",
+            "photos": 14,
+            "precision": 1.0,
+            "recall": 0.0714
+          },
+          {
+            "matched": true,
+            "person": "p7",
+            "photos": 9,
+            "precision": 1.0,
+            "recall": 0.2222
+          },
+          {
+            "matched": true,
+            "person": "p8",
+            "photos": 9,
+            "precision": 1.0,
+            "recall": 0.1111
+          },
+          {
+            "matched": true,
+            "person": "p9",
+            "photos": 8,
+            "precision": 1.0,
+            "recall": 0.125
+          },
+          {
+            "matched": false,
+            "person": "p10",
+            "photos": 0,
+            "precision": null,
+            "recall": null
+          }
+        ]
+      },
+      "ref_copies": {
+        "closest_phash_distance": 14,
+        "flagged": [],
+        "highest_face_similarity": 0.806,
+        "near_copy": 0,
+        "ref_photos": 28,
+        "same_face": 0,
+        "same_file": 0
+      },
+      "refs": {
+        "files_skipped": 0,
+        "named": 10,
+        "names": 10,
+        "no_match": 0,
+        "no_usable_photo": 0
+      },
+      "rows_not_found": 0,
+      "split": "dev",
+      "tripsort_version": "0.3.0"
+    },
+    "private_videos_test": {
+      "categories": {
+        "accuracy": 0.9839,
+        "confusion": {
+          "labels": [
+            "scenery",
+            "animals",
+            "food",
+            "documents",
+            "other"
+          ],
+          "rows_labeled_columns_predicted": [
+            [
+              6,
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              5,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              2,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              2,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              46
+            ]
+          ]
+        },
+        "labeled_categories": [
+          "scenery",
+          "animals",
+          "food",
+          "documents"
+        ],
+        "macro_f1_labeled": 0.9581,
+        "per_category": {
+          "animals": {
+            "f1": 0.9091,
+            "precision": 0.8333,
+            "predicted": 6,
+            "recall": 1.0,
+            "right": 5,
+            "support": 5
+          },
+          "documents": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 2,
+            "recall": 1.0,
+            "right": 2,
+            "support": 2
+          },
+          "food": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 2,
+            "recall": 1.0,
+            "right": 2,
+            "support": 2
+          },
+          "other": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 46,
+            "recall": 1.0,
+            "right": 46,
+            "support": 46
+          },
+          "scenery": {
+            "f1": 0.9231,
+            "precision": 1.0,
+            "predicted": 6,
+            "recall": 0.8571,
+            "right": 6,
+            "support": 7
+          }
+        },
+        "photos": 62,
+        "wrong_photos": {}
+      },
+      "checked_rows": 62,
+      "labeled_names_without_a_ref": 18,
+      "people": {
+        "macro": {
+          "precision": 0.9375,
+          "recall": 0.2437
+        },
+        "micro": {
+          "precision": 0.9444,
+          "recall": 0.165
+        },
+        "per_person": [
+          {
+            "matched": true,
+            "person": "p1",
+            "photos": 14,
+            "precision": 1.0,
+            "recall": 0.2143
+          },
+          {
+            "matched": true,
+            "person": "p2",
+            "photos": 18,
+            "precision": 1.0,
+            "recall": 0.1667
+          },
+          {
+            "matched": false,
+            "person": "p3",
+            "photos": 15,
+            "precision": null,
+            "recall": 0.0
+          },
+          {
+            "matched": true,
+            "person": "p4",
+            "photos": 10,
+            "precision": 1.0,
+            "recall": 0.1
+          },
+          {
+            "matched": true,
+            "person": "p5",
+            "photos": 8,
+            "precision": 1.0,
+            "recall": 0.25
+          },
+          {
+            "matched": false,
+            "person": "p6",
+            "photos": 7,
+            "precision": null,
+            "recall": 0.0
+          },
+          {
+            "matched": true,
+            "person": "p7",
+            "photos": 11,
+            "precision": 1.0,
+            "recall": 0.2727
+          },
+          {
+            "matched": true,
+            "person": "p8",
+            "photos": 10,
+            "precision": 0.5,
+            "recall": 0.1
+          },
+          {
+            "matched": true,
+            "person": "p9",
+            "photos": 9,
+            "precision": 1.0,
+            "recall": 0.3333
+          },
+          {
+            "matched": true,
+            "person": "p10",
+            "photos": 1,
+            "precision": 1.0,
+            "recall": 1.0
+          }
+        ]
+      },
+      "ref_copies": {
+        "closest_phash_distance": 14,
+        "flagged": [],
+        "highest_face_similarity": 0.806,
+        "near_copy": 0,
+        "ref_photos": 28,
+        "same_face": 0,
+        "same_file": 0
+      },
+      "refs": {
+        "files_skipped": 0,
+        "named": 10,
+        "names": 10,
+        "no_match": 0,
+        "no_usable_photo": 0
+      },
+      "rows_not_found": 0,
+      "split": "test",
+      "tripsort_version": "0.3.0"
     }
   }
 }

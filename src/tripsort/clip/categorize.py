@@ -6,6 +6,9 @@ scores into shares that add up to 1. The top category is the photo's primary cat
 its share is at least ``category_min_score``; otherwise, and whenever ``other`` is on top,
 the photo is ``other``. Every share is stored, so a new threshold needs no CLIP at all.
 
+A video gets its category the same way, from the mean of its sampled frames' embeddings;
+it is ``other`` when at least ``person_min_frames`` of its frames show a face that tall.
+
 When ``category_face_height`` is above 0, a photo whose largest counted face (detection score
 and size as the people settings count them) is at least that share of its height is about
 its people, so its category is ``other`` whatever CLIP says; its shares are kept as they are.
@@ -16,7 +19,7 @@ took the photo.
 """
 
 import sqlite3
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -24,7 +27,7 @@ import numpy as np
 import numpy.typing as npt
 
 from tripsort.clip.prompts import config_prompts, prompt_vectors
-from tripsort.clip.types import CLIP_MODEL_ID, EMBEDDING_SIZE, TextEncoder
+from tripsort.clip.types import CLIP_MODEL_ID, EMBEDDING_SIZE, TextEncoder, unit_rows
 from tripsort.config import OTHER, Config
 from tripsort.dedupe.copies import kept_images
 from tripsort.errors import ModelError
@@ -39,6 +42,7 @@ class CategoryStats:
     scored: int = 0  # kept photos given categories
     not_embedded: int = 0  # kept photos without a CLIP embedding yet
     problem: str | None = None  # why no photo was scored at all
+    videos: dict[str, int] = field(default_factory=dict)  # primary category -> videos
 
 
 def shares(
@@ -92,7 +96,8 @@ def analyze_categories(
         if int(media_id) in kept
     ]
     not_embedded = len(kept) - len(rows)
-    if not rows:
+    videos = video_embeddings(conn, model_id)
+    if not rows and not videos:
         return CategoryStats(not_embedded=not_embedded)
     try:
         vectors = prompt_vectors(conn, config_prompts(config), load_text)
@@ -104,7 +109,11 @@ def analyze_categories(
     )
 
     labels = list(config.categories)
-    scores = shares(images, [_stack(vectors, config.categories[label]) for label in labels])
+    sets = [_stack(vectors, config.categories[label]) for label in labels]
+    video_counts = _score_videos(conn, config, videos, labels, sets)
+    if not rows:
+        return CategoryStats(not_embedded=not_embedded, videos=video_counts)
+    scores = shares(images, sets)
     primary = primaries(scores, labels, config.thresholds.category_min_score)
     if (face_height := config.thresholds.category_face_height) > 0:
         tall = people_photos(conn, config, face_height)
@@ -133,7 +142,68 @@ def analyze_categories(
         photos={label: counts[label] for label in labels},
         scored=len(rows),
         not_embedded=not_embedded,
+        videos=video_counts,
     )
+
+
+def video_embeddings(conn: sqlite3.Connection, model_id: str) -> dict[int, npt.NDArray[np.float32]]:
+    """Each sampled video's mean frame embedding (normalized), for videos in some zip that
+    are not a Live Photo's motion clip."""
+    frames: defaultdict[int, list[bytes]] = defaultdict(list)
+    for media_id, blob in conn.execute(
+        "SELECT e.media_id, e.embedding FROM clip_embeddings e JOIN media m ON m.id = e.media_id "
+        "WHERE e.model_id = ? AND e.frame_ts >= 0 AND m.kind = 'video' AND m.status = 'ok' "
+        "AND m.id IN (SELECT media_id FROM occurrences) "
+        "AND m.id NOT IN (SELECT motion_id FROM live_photos) ORDER BY e.media_id, e.frame_ts",
+        (model_id,),
+    ):
+        frames[int(media_id)].append(blob)
+    means = {}
+    for media_id, blobs in frames.items():
+        stacked = np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(-1, EMBEDDING_SIZE)
+        means[media_id] = unit_rows(stacked.mean(axis=0, keepdims=True))[0]
+    return means
+
+
+def _score_videos(
+    conn: sqlite3.Connection,
+    config: Config,
+    videos: dict[int, npt.NDArray[np.float32]],
+    labels: list[str],
+    sets: list[npt.NDArray[np.float32]],
+) -> dict[str, int]:
+    if not videos:
+        return {}
+    ids = sorted(videos)
+    scores = shares(np.stack([videos[media_id] for media_id in ids]), sets)
+    primary = primaries(scores, labels, config.thresholds.category_min_score)
+    if (face_height := config.thresholds.category_face_height) > 0:
+        people = config.people
+        tall = {
+            int(media_id)
+            for (media_id,) in conn.execute(
+                "SELECT media_id FROM faces WHERE model_id = ? AND frame_ts >= 0 AND score >= ? "
+                "AND h >= ? AND h >= ? GROUP BY media_id HAVING COUNT(DISTINCT frame_ts) >= ?",
+                (
+                    FACE_MODEL_ID,
+                    people.min_face_score,
+                    people.foreground_min_height,
+                    face_height,
+                    config.video.person_min_frames,
+                ),
+            )
+        }
+        primary = [OTHER if m in tall else p for m, p in zip(ids, primary, strict=True)]
+    conn.executemany(
+        "INSERT INTO categories (media_id, label, score, is_primary) VALUES (?, ?, ?, ?)",
+        [
+            (media_id, label, float(scores[row, column]), int(primary[row] == label))
+            for row, media_id in enumerate(ids)
+            for column, label in enumerate(labels)
+        ],
+    )
+    counts = Counter(primary)
+    return {label: counts[label] for label in labels}
 
 
 def people_photos(conn: sqlite3.Connection, config: Config, face_height: float) -> set[int]:

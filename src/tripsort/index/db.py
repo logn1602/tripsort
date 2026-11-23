@@ -71,7 +71,11 @@ def schema_version(conn: sqlite3.Connection) -> int:
 
 
 def migrate(conn: sqlite3.Connection) -> int:
-    """Apply every migration newer than the index, each in its own transaction."""
+    """Apply every migration newer than the index, each in its own transaction.
+
+    Foreign keys are off while a migration runs, so it can rebuild a table other tables
+    refer to (SQLite cannot change a CHECK constraint in place); each migration commits only
+    when ``PRAGMA foreign_key_check`` finds nothing broken."""
     current = schema_version(conn)
     available = migrations()
     latest = available[-1][0]
@@ -80,24 +84,34 @@ def migrate(conn: sqlite3.Connection) -> int:
             f"this index uses schema version {current}, but this tripsort only knows up to "
             f"{latest}; upgrade tripsort to open it"
         )
-    for number, sql in available:
-        if number <= current:
-            continue
-        bootstrap = (
-            "CREATE TABLE schema_version (version INTEGER NOT NULL);\n"
-            "INSERT INTO schema_version (version) VALUES (0);\n"
-            if number == 1
-            else ""
-        )
-        script = (
-            f"BEGIN;\n{bootstrap}{sql}\nUPDATE schema_version SET version = {number};\nCOMMIT;\n"
-        )
-        try:
-            conn.executescript(script)
-        except BaseException:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
+    pending = [(number, sql) for number, sql in available if number > current]
+    if not pending:
+        return latest
+    conn.execute("PRAGMA foreign_keys = OFF")  # only takes effect outside a transaction
+    try:
+        for number, sql in pending:
+            bootstrap = (
+                "CREATE TABLE schema_version (version INTEGER NOT NULL);\n"
+                "INSERT INTO schema_version (version) VALUES (0);\n"
+                if number == 1
+                else ""
+            )
+            try:
+                conn.executescript(
+                    f"BEGIN;\n{bootstrap}{sql}\nUPDATE schema_version SET version = {number};\n"
+                )
+                if broken := conn.execute("PRAGMA foreign_key_check").fetchall():
+                    raise IndexVersionError(
+                        f"migration {number} would break {len(broken)} references between "
+                        "tables; the index was left as it was"
+                    )
+                conn.execute("COMMIT")
+            except BaseException:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
     return latest
 
 

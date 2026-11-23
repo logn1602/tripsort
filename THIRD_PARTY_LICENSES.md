@@ -44,6 +44,17 @@ their own computer, never for faces; its categories were tested on a labeled tri
 `docs/decisions.md`), and prompts should be in English. The license and the model card were
 checked on 2026-11-21.
 
+## The `video` extra
+
+`pip install "tripsort[video]"` installs [PyAV](https://github.com/PyAV-Org/PyAV) (`av`
+18.1, BSD-3-Clause) from PyPI; tripsort bundles none of it and uses it only to read video
+frames and metadata. PyAV's wheels bundle FFmpeg (8.1 in `av` 18.1.0) together with codec
+libraries under their own licenses. In the `av` 18.1.0 Windows wheel, FFmpeg reports its
+license as LGPL version 3 or later, and the bundled libraries include x264 and x265 (GPL),
+dav1d, libvpx, Opus, LAME, SVT-AV1, and opencore-amr. See PyAV's
+[license](https://github.com/PyAV-Org/PyAV/blob/main/LICENSE.txt) and FFmpeg's
+[legal page](https://ffmpeg.org/legal.html). Checked on 2026-11-21.
+
 ## Test fixtures
 
 The face-model tests use three public-domain portrait paintings, and the category tests 25

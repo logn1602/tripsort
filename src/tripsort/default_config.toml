@@ -13,6 +13,19 @@ category_min_score = 0.30               # a photo's top category needs at least 
 category_face_height = 0.03            # a face this tall (share of the photo's height) makes people the subject: `other` (0: off)
 burst_similarity = 0.92                 # CLIP similarity each shot of a burst needs to the burst's first shot
 burst_window_seconds = 10.0             # the most a burst's shots may come after its first, on one camera
+# Rejects (blurry, dark, blown out) are listed in rejects/<reason>/ to check, and stay in all/.
+# They also stay in people/, shots/, and categories/ unless hide_rejects is true: on a fresh
+# trip half the photos these values flag were fine (issue #18).
+# Sharpness is the Laplacian variance of a photo's sharpest tiles on a 512 px gray copy.
+# Tuned on the dev halves of two labeled sets (see docs/decisions.md): the loosest values that
+# flag no photo labeled fine, and the strictest of those that flag the same photos.
+reject_max_sharpness = 75.0             # blurry: sharpest tiles under this (0: never)
+reject_max_luma = 50.0                  # dark: mean brightness (0 to 255) under this ...
+reject_min_dark_frac = 0.50             # ... and at least this share of crushed pixels
+reject_min_bright_frac = 0.30           # blown out: more than this share of blown pixels (1: never)
+reject_max_detail = 1500.0              # dark or blown out only with less detail than this (sharp night lights and text stay)
+hide_rejects = false                    # rejects also leave people/, shots/, and categories/
+burst_tie_sharpness = 0.95              # burst shots this close to the sharpest one's sharpness count as tied
 
 [people]
 # Faces are found once, at ingest; every value here applies in `analyze`, so changing one
@@ -37,6 +50,16 @@ suggest_min_similarity = 0.6       # suggest merging an unnamed person into a na
 selfie_min_score = 1.0
 selfie_prompts = ["a selfie", "a selfie taken with a phone's front camera"]
 not_selfie_prompts = ["a photo of people taken by someone else", "a photo of a person taken from a distance"]
+
+[video]
+# Videos need the [video] extra (PyAV); without it they are checked for exact duplicates only.
+# Frames are sampled once, at ingest, for faces and CLIP; a new sampling samples every video
+# again.
+frame_every_seconds = 2.0          # the first frame, then one every this many seconds
+max_frames = 30                    # at most this many per clip, spread evenly over a longer one
+live_photo_max_seconds = 5.0       # a video named like a still beside it is that Live Photo's motion if no longer
+person_min_frames = 2              # a person is in a video when matched in at least this many frames
+match_people = false               # match faces in videos to people, for people/ (off: too few found yet, issue #17)
 
 [categories]
 # Each [categories.<name>] table is a category, sorted into categories/<name>/. A photo's
