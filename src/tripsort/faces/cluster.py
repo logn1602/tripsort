@@ -17,7 +17,13 @@ checks against each cluster's average face:
 
 HDBSCAN never returns exactly one cluster by default, which would leave a trip with one
 recurring person without any; when it finds none, it runs again allowing a single one.
+
+A small trip (at most ``small_trip_max_faces`` foreground faces in kept photos) lets 3 faces
+make a person instead of ``min_cluster_size``: with fewer faces, a friend in only a few
+photos formed no person, and a ref then named a look-alike's person instead (issue #8).
 """
+
+import dataclasses
 
 import numpy as np
 import numpy.typing as npt
@@ -27,8 +33,18 @@ from tripsort.config import PeopleSettings
 from tripsort.faces.types import normalized
 
 NOISE = -1
+SMALL_TRIP_MIN_CLUSTER_SIZE = 3
 Labels = npt.NDArray[np.intp]
 Embeddings = npt.NDArray[np.float32]
+
+
+def for_trip(settings: PeopleSettings, foreground_faces: int) -> PeopleSettings:
+    """``settings`` with the ``min_cluster_size`` a trip with ``foreground_faces`` uses: 3 on
+    a small trip, unless ``min_cluster_size`` is lower already."""
+    if settings.small_trip_max_faces and foreground_faces <= settings.small_trip_max_faces:
+        smaller = min(settings.min_cluster_size, SMALL_TRIP_MIN_CLUSTER_SIZE)
+        return dataclasses.replace(settings, min_cluster_size=smaller)
+    return settings
 
 
 def cluster_embeddings(embeddings: Embeddings, settings: PeopleSettings) -> Labels:

@@ -32,11 +32,13 @@ burst_tie_sharpness = 0.95              # burst shots this close to the sharpest
 # reads no pixels. Similarities are cosine similarities of face embeddings (1 = identical).
 # Tuned on the dev half of a labeled trip with eval/run_eval.py (see docs/decisions.md):
 # min_cluster_size and ref_min_similarity changed, and the dev set kept the rest.
+# small_trip_max_faces was tuned on half- and quarter-size replays of two labeled trips.
 min_face_score = 0.8               # YuNet detection score a face needs to count at all
 foreground_min_ratio = 0.30        # foreground: at least this share of the tallest face's height
 foreground_min_height = 0.03       # and at least this share of the image height
 cluster_method = "hdbscan"         # "hdbscan" or "agglomerative"
 min_cluster_size = 4               # fewer faces than this never form a person
+small_trip_max_faces = 900         # on a trip with at most this many foreground faces, 3 faces make a person (0: never)
 min_samples = 3                    # hdbscan: higher is more conservative
 agglomerative_min_similarity = 0.4 # agglomerative: merge while the average similarity is at least this
 member_min_similarity = 0.3        # a clustered face less like the person's average face than this is taken out

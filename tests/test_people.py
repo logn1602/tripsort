@@ -152,11 +152,29 @@ def test_renames_and_merges_survive_new_photos(
         tmp_path / "in" / "looks.zip",
         [(f"c{i}.jpg", solo(3 if i < 3 else 4, 20 + i)) for i in range(6)],
     )
-    folder = tmp_path / "small"  # each look is in 3 photos, under the default of 4
+    folder = tmp_path / "small"  # each look is in 3 photos: on a small trip, enough
     folder.mkdir()
-    (folder / "tripsort.toml").write_text("[people]\nmin_cluster_size = 3\n", encoding="utf-8")
     with Project.open(folder) as project:
         check_renames_and_merges(project, faces_trip, looks, tmp_path)
+
+
+def test_three_photos_make_no_person_with_the_small_trip_rule_off(
+    faces_trip: dict[str, Path], marker_faces: MarkerFaceAnalyzer, tmp_path: Path
+) -> None:
+    looks = make_zip(
+        tmp_path / "in" / "looks.zip", [(f"c{i}.jpg", solo(3, 20 + i)) for i in range(3)]
+    )
+    folder = tmp_path / "small"
+    folder.mkdir()
+    (folder / "tripsort.toml").write_text("[people]\nsmall_trip_max_faces = 0\n", encoding="utf-8")
+    with Project.open(folder) as project:
+        project.ingest([faces_trip["mine"], faces_trip["sam"], looks])
+        assert project.analyze().people.min_cluster_size == 4
+        assert "person_04" not in people(project)  # 3 photos, under min_cluster_size
+    (folder / "tripsort.toml").unlink()
+    with Project.open(folder) as project:  # the defaults: a trip this small needs 3
+        assert project.analyze().people.min_cluster_size == 3
+        assert people(project)["person_04"] == 3
 
 
 def check_renames_and_merges(

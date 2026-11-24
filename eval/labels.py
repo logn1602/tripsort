@@ -5,7 +5,9 @@ Columns:
 * ``row``: the row number labels.html shows next to the photo;
 * ``file``: ``<subfolder>/<path>`` inside the labeled set's folder;
 * ``split``: ``dev`` (tune on it) or ``test`` (report on it once), 50/50 by the photo's
-  SHA-256, so the split never depends on the order of anything;
+  SHA-256, so the split never depends on the order of anything. Copies sit on one side:
+  photos that are copies of each other (see ``split_groups``) all take the split of the
+  smallest SHA-256 among them;
 * ``checked``: ``y`` once the row was reviewed; only checked rows count;
 * ``people``: the labeled people in the photo, ``;``-separated: only the people with a ref
   (the labeler and the friends they chose), in every row they are in, background included.
@@ -18,6 +20,7 @@ Validation messages name the row and column only, never a value: a value may be 
 """
 
 import csv
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,6 +45,63 @@ class Row:
 
 def split_for(sha256: str) -> str:
     return "dev" if int(sha256[:8], 16) % 2 == 0 else "test"
+
+
+def copy_groups(items: Iterable[int], joined: Iterable[tuple[int, int]]) -> list[list[int]]:
+    """The groups that ``joined`` pairs make of ``items``, directly or through others: every
+    item is in exactly one group, sorted, and the groups are sorted too."""
+    parent = {item: item for item in items}
+
+    def root(item: int) -> int:
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    for a, b in joined:
+        if a in parent and b in parent:
+            first, second = sorted((root(a), root(b)))
+            parent[second] = first
+    groups: dict[int, list[int]] = {}
+    for item in sorted(parent):
+        groups.setdefault(root(item), []).append(item)
+    return sorted(groups.values())
+
+
+def face_copies(
+    likeness: dict[tuple[int, int], float], shots: dict[int, str]
+) -> set[tuple[int, int]]:
+    """Which photos that share a face are copies. ``likeness`` holds, for each two photos
+    whose faces are nearly the same (as ``(smaller id, larger id)``), how alike their most
+    alike faces are; ``shots`` the EXIF capture time and camera of each photo that records
+    them. Two photos with different shots are two shots, never copies, as in tripsort's own
+    copy rule; two with the same shot are copies (an edit or a crop that kept the EXIF). A
+    photo with no shot (a copy sent on, its EXIF dropped) is a copy of the one photo it is
+    most like: a copy has one original, so it never joins the shots of a moment together."""
+    joined = set()
+    original: dict[int, tuple[float, int]] = {}
+    for (a, b), alike in sorted(likeness.items()):
+        if a in shots and b in shots:
+            if shots[a] == shots[b]:
+                joined.add((a, b))
+            continue
+        for one, other in ((a, b), (b, a)):
+            if one not in shots and alike > original.get(one, (-2.0, 0))[0]:
+                original[one] = (alike, other)
+    joined |= {(min(one, other), max(one, other)) for one, (_, other) in original.items()}
+    return joined
+
+
+def split_groups(sha256s: dict[int, str], joined: Iterable[tuple[int, int]]) -> dict[int, str]:
+    """The split of each item of ``sha256s`` (an id and its SHA-256), with each group that
+    ``joined`` pairs make (see ``copy_groups``) on one side: the side of the smallest SHA-256
+    in it. A copy then never sits in dev while its twin is in test, and the split still
+    depends on nothing's order."""
+    splits = {}
+    for group in copy_groups(sha256s, joined):
+        side = split_for(min(sha256s[item] for item in group))
+        splits.update(dict.fromkeys(group, side))
+    return splits
 
 
 def person_key(name: str) -> str:

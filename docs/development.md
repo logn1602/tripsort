@@ -105,7 +105,7 @@ phone) named by `TRIPSORT_EVAL_DIR`, kept outside the repository.
 
 ```console
 uv run eval/run_eval.py prelabel --refs REFS --work WORK     # labels.csv + labels.html
-uv run eval/run_eval.py people   --refs REFS --work WORK [--split dev|test] [--set people.KEY=VALUE]
+uv run eval/run_eval.py people   --refs REFS --work WORK [--split dev|test] [--replays] [--set people.KEY=VALUE]
 ```
 
 `prelabel` writes `labels.csv` (one row per kept photo, filled with tripsort's guesses) and
@@ -117,7 +117,20 @@ checked and moves to the next). Changes are kept in the browser as you make them
 **Save labels.csv** writes the file: Edge and Chrome write it in place, other browsers
 download it. Only the people in `REFS` are labeled (yourself and the friends you chose):
 list them in every row they are in, and leave everyone else out. The shot type counts
-everyone. Fix the wrong rows and mark the reviewed ones checked. `people` then prints, for
+everyone. A photo is scenery when the view is the main subject, even with friends small in
+it, and other when people fill the frame. The page shows these rules at the top. Fix the
+wrong rows and mark the reviewed ones checked.
+
+The rows are split 50/50 into `dev` and `test` by SHA-256, with copies on one side: photos
+that are shots of one burst, whose pHashes are within tripsort's loosest near-copy distance,
+or that share a face at least 0.9 alike take, together with everything they join through
+others, the split of the smallest SHA-256 among them. A shared face joins two photos only
+when their EXIF does not say two shots: the same capture time and camera (an edit or a crop
+that kept the EXIF), or, for a photo with no EXIF time (a copy sent on), the one photo it is
+most like. Without that, the face test chained the retakes of a whole moment, minutes apart,
+into groups of dozens. Tuning on `dev` then never sees a twin of a `test` photo, such as a
+crop or an edit tripsort did not merge. `prelabel` prints how many such groups it made and
+which tests joined them. `people` then prints, for
 the checked rows of one split, precision and
 recall for each labeled person, shot-type accuracy, and face-level homogeneity and
 completeness from solo photos of labeled people: tune on `dev`, report `test` once. Every
@@ -129,6 +142,11 @@ of the suggested person's `dev` photos list the named person, which confirms it 
 them do; then the split's scores after merging the confirmed suggestions (a user who
 checks each one) and after merging every suggestion (a user who accepts them all). Which
 suggestions count as confirmed always comes from the `dev` rows, even when scoring `test`.
+With `--replays`, `people` also scores smaller trips cut from the labeled one: a random half
+and a quarter of its kept photos, 5 draws each with fixed seeds, each analyzed from scratch
+as a trip of its own, so a small draw gets the small-trip rule (`small_trip_max_faces`).
+The checked rows of the split among them are scored as the whole trip's are, and each draw
+prints its precision, recall, foreground faces, and the `min_cluster_size` it used.
 Both commands also check that no ref photo is a copy of a labeled
 photo (the same file, a near copy by pHash, or nearly the same face) and print the counts,
 giving any flagged photo by position. Only numbers are printed, with people shown as p1,
@@ -202,7 +220,11 @@ uv run eval/run_eval.py videos   --refs REFS --work WORK [--split dev|test]
 
 `prelabel --videos` writes a row per video (Live Photo motion clips aside), split by SHA-256
 like the photos and filled with tripsort's guesses (people only when a ref names them), and a
-page showing each video's first, middle, and last sampled frames with their face boxes.
+page showing each video's first, middle, and last sampled frames with their face boxes, with
+buttons for the people and the category only: videos get no shot type or selfie. Copies sit
+on one side here too: videos whose lengths are within half a second and whose sampled
+frames are on average at least 0.95 alike to CLIP, such as a copy a messaging app made
+smaller, which tripsort merges only when the bytes are the same.
 `videos` scores the people and the category of the checked rows of one split, as `people` and
 `categories` do for photos. Only the people in `REFS` are scored: any other name in a row is
 left out and counted as `labeled_names_without_a_ref`.

@@ -13,7 +13,12 @@ the old page that never reached labels.csv are offered back.
 
 With ``categories_only`` (a set with no people, labeled for categories alone) the cards
 offer only the category, and a row can be checked with a category; labels.csv keeps all its
-columns, with the shot set to none by prelabel.
+columns, with the shot set to none by prelabel. With ``videos`` (video_labels.csv) the cards
+offer the people and the category, since videos get no shot type or selfie.
+
+The rules shown at the top follow the labeling rules: people only with a ref, in every row
+they are in; the shot counting everyone; and scenery when the view is the main subject, even
+with friends small in it, but other when people fill the frame (issue #13).
 
 The page shows friends' faces and names. It is written next to labels.csv, in the labeled
 set's folder, and never anywhere else.
@@ -77,6 +82,7 @@ def page_data(
     csv_sha256: str,
     can_save: bool,
     categories_only: bool = False,
+    videos: bool = False,
 ) -> dict[str, Any]:
     """What the page's script starts from: each row's labels, the names to offer, and the ids
     its storage is kept under (``set`` names the rows, ``base`` their labels right now)."""
@@ -102,6 +108,7 @@ def page_data(
         "csvSha256": csv_sha256,  # labels.csv's bytes, to notice it changed behind the page
         "canSave": can_save,
         "categoriesOnly": categories_only,
+        "videos": videos,  # people and category only: videos get no shot type or selfie
         "columns": list(COLUMNS),
         "names": names,
         "shots": list(SHOTS),
@@ -215,31 +222,64 @@ _BAR = """
 </header>
 """
 
-_RULES = """
-<details class="rules"><summary>How to label</summary>
-<p>Each card is one row of labels.csv. Click what is true for the photo, or use the keys
-(<b>Keys</b> lists them), then mark the row <b>checked</b>: Enter checks it and moves to the
-next row. Only checked rows count. Every change is kept in this browser as you make it, so
-closing the page loses nothing. <b>Save labels.csv</b> writes the file: the first time, pick
-the labels.csv next to this page. A browser that cannot write files downloads it instead: put
-the download in place of the old labels.csv.</p>
+# The scenery rule of issue #13: a view with friends small in it is still scenery.
+_CATEGORY_RULE = """<li><b>category</b>: scenery when the view is the main subject, even with
+friends small in it; other when people fill the frame. Animals, food, or documents
+(screenshots, tickets, receipts, maps) when that is the subject; other for anything else.</li>
+"""
+
+_SAVING = """Click what is true for the {what}, or use the keys (<b>Keys</b> lists them), then
+mark the row <b>checked</b>: Enter checks it and moves to the next row. Only checked rows
+count. Every change is kept in this browser as you make it, so closing the page loses
+nothing. <b>Save labels.csv</b> writes the file: the first time, pick the labels.csv next to
+this page. A browser that cannot write files downloads it instead: put the download in place
+of the old labels.csv.</p>"""
+
+_RULES = (
+    """
+<details class="rules" open><summary>How to label</summary>
+<p>Each card is one row of labels.csv. """
+    + _SAVING.format(what="photo")
+    + """
 <ul>
-<li><b>people</b>: only the people you have a ref photo for, in every photo they are in,
-including the background. Leave everyone else out: they are not scored. The boxes are
-tripsort's guess for each face, orange in the foreground and blue dashed in the background: a
-name, a person_NN (someone tripsort could not name), or '?' (the face matched nobody). A dashed
-button is a name in labels.csv that matches no ref.</li>
+<li><b>people</b>: only the names on the buttons, the people you have a ref photo for, in
+every photo they are in, including the background. Leave everyone else out: they are not
+scored. The boxes are tripsort's guess for each face, orange in the foreground and blue dashed
+in the background: a name, a person_NN (someone tripsort could not name), or '?' (the face
+matched nobody). A dashed button is a name in labels.csv that matches no ref.</li>
 <li><b>shot</b>: solo (one person is the subject), group (two or more), or none (no one),
 counting everyone, named or not.</li>
 <li><b>selfie</b>: on when someone in the photo took it with the front camera.</li>
-<li><b>category</b>: scenery (the view itself is the subject), animals, food, documents
-(screenshots, tickets, receipts, maps), or other. If people are the main subject, it is
-other.</li>
-</ul>
+"""
+    + _CATEGORY_RULE
+    + """</ul>
 <p>The buttons start from labels.csv, which started from tripsort's guesses: check each one.
 If labels.csv changes outside this page, run prelabel again to rebuild the page.</p>
 </details>
 """
+)
+
+_RULES_VIDEOS = (
+    """
+<details class="rules" open><summary>How to label</summary>
+<p>Each card is one row of labels.csv: a video, shown by its first, middle, and last sampled
+frames with tripsort's face boxes. When the frames may miss someone, open the video itself:
+its path is under the frames. """
+    + _SAVING.format(what="video")
+    + """
+<ul>
+<li><b>people</b>: only the names on the buttons, the people you have a ref photo for, in
+every video they are in, including the background. Leave everyone else out: they are not
+scored.</li>
+"""
+    + _CATEGORY_RULE
+    + """</ul>
+<p>Videos get no shot type and no selfie. The buttons start from labels.csv, which started
+from tripsort's guesses: check each one. If labels.csv changes outside this page, run
+prelabel again to rebuild the page.</p>
+</details>
+"""
+)
 
 _RULES_CATEGORIES = """
 <details class="rules" open><summary>How to label</summary>
@@ -261,6 +301,24 @@ _HELP_CATEGORIES = """
 aria-labelledby="help-title">
 <h2 id="help-title">Keys</h2>
 <dl>
+<dt>V, A, F, D, O</dt><dd>category: scenery, animals, food, documents, other</dd>
+<dt>Enter</dt><dd>mark the row checked and go to the next one</dd>
+<dt>X</dt><dd>checked on or off, staying on the row</dd>
+<dt>J, K, arrow keys</dt><dd>next or previous row</dd>
+<dt>Ctrl+S</dt><dd>save labels.csv</dd>
+<dt>?</dt><dd>show or hide this list</dd>
+</dl>
+<p>The keys act on the outlined row. Click a card to make it that row.</p>
+<button type="button" class="tool" id="help-close">Close</button>
+</div></div>
+"""
+
+_HELP_VIDEOS = """
+<div class="help" id="help" hidden><div class="panel" role="dialog" aria-modal="true"
+aria-labelledby="help-title">
+<h2 id="help-title">Keys</h2>
+<dl>
+<dt>1 to 9, 0</dt><dd>a person on or off (the number on their button)</dd>
 <dt>V, A, F, D, O</dt><dd>category: scenery, animals, food, documents, other</dd>
 <dt>Enter</dt><dd>mark the row checked and go to the next one</dd>
 <dt>X</dt><dd>checked on or off, staying on the row</dd>
@@ -305,6 +363,7 @@ _SCRIPT = r"""
   const KEY = PREFIX + data.base;
   const SHOT_KEYS = {s: "solo", g: "group", n: "none"};
   const CATEGORY_KEYS = {v: "scenery", a: "animals", f: "food", d: "documents", o: "other"};
+  const NO_SHOT = data.categoriesOnly || data.videos;  // no shot type or selfie to label
   const keyFor = (map, value) =>
     (Object.keys(map).find((k) => map[k] === value) || "").toUpperCase();
   const refKeys = new Set(data.names.map(keyOf));
@@ -384,7 +443,7 @@ _SCRIPT = r"""
     }
     const hint = document.createElement("span");
     hint.className = "hint";
-    const faces = data.categoriesOnly ? [] : [
+    const faces = data.categoriesOnly ? [] : data.videos ? [group("people", people)] : [
       group("people", people),
       group("shot", data.shots.map((v) => button("shot", v, v, keyFor(SHOT_KEYS, v)))),
       group("selfie", [button("selfie", "y", "selfie", "Y")]),
@@ -448,8 +507,8 @@ _SCRIPT = r"""
   function toggleSelfie(i) { change(i, (s) => { s.selfie = !s.selfie; }); }
   function toggleChecked(i) {
     const s = state[i];
-    if (!s.checked && !(s.category && (s.shot || data.categoriesOnly))) {
-      hint(i, data.categoriesOnly ? "Pick a category first." : "Pick a shot and a category first.");
+    if (!s.checked && !(s.category && (s.shot || NO_SHOT))) {
+      hint(i, NO_SHOT ? "Pick a category first." : "Pick a shot and a category first.");
       return false;
     }
     change(i, (x) => { x.checked = !x.checked; });
@@ -814,9 +873,9 @@ _SCRIPT = r"""
       if (j < data.names.length) toggleName(current, data.names[j]);
       else handled = false;
     }
-    else if (has(SHOT_KEYS, key) && !data.categoriesOnly) setShot(current, SHOT_KEYS[key]);
+    else if (has(SHOT_KEYS, key) && !NO_SHOT) setShot(current, SHOT_KEYS[key]);
     else if (has(CATEGORY_KEYS, key)) setCategory(current, CATEGORY_KEYS[key]);
-    else if (key === "y" && !data.categoriesOnly) toggleSelfie(current);
+    else if (key === "y" && !NO_SHOT) toggleSelfie(current);
     else if (key === "x") toggleChecked(current);
     else handled = false;
     if (handled) e.preventDefault();
@@ -838,14 +897,28 @@ def write_page(
     can_save: bool = True,
     categories_only: bool = False,
     csv_name: str = "labels.csv",
+    videos: bool = False,
 ) -> None:
     """Write the page for ``cards`` (the rows of labels.csv), with a button for each of
     ``names``. ``csv_sha256`` is labels.csv's SHA-256 as the cards were read from it;
     ``can_save`` is off when some rows of labels.csv could not be read, since saving would
-    drop them. ``categories_only`` offers the category alone. ``csv_name`` is the file the
-    page writes (video_labels.csv for the videos), in its text and its Save button."""
+    drop them. ``categories_only`` offers the category alone, and ``videos`` the people and
+    the category (the cards are videos). ``csv_name`` is the file the page writes
+    (video_labels.csv for the videos), in its text and its Save button."""
     data = page_data(
-        cards, names, csv_sha256=csv_sha256, can_save=can_save, categories_only=categories_only
+        cards,
+        names,
+        csv_sha256=csv_sha256,
+        can_save=can_save,
+        categories_only=categories_only,
+        videos=videos,
+    )
+    rules, keys = (
+        (_RULES_CATEGORIES, _HELP_CATEGORIES)
+        if categories_only
+        else (_RULES_VIDEOS, _HELP_VIDEOS)
+        if videos
+        else (_RULES, _HELP)
     )
 
     def named(text: str) -> str:
@@ -857,7 +930,7 @@ def write_page(
         f"<title>Labels: {len(cards):,} rows</title><style>{_STYLE}</style></head><body>",
         named(_BAR),
         "<main>",
-        named(_RULES_CATEGORIES if categories_only else _RULES),
+        named(rules),
         "<noscript><p class='banner'>This page needs JavaScript to label.</p></noscript>",
         "<div class='banner' id='banner' hidden></div>",
         "<div class='cards'>",
@@ -886,7 +959,7 @@ def write_page(
         )
     parts += [
         "</div></main>",
-        named(_HELP_CATEGORIES if categories_only else _HELP),
+        named(keys),
         f"<script type='application/json' id='labels-data'>{_script_json(data)}</script>",
         f"<script>{named(_SCRIPT)}</script></body></html>\n",
     ]

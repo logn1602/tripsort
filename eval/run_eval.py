@@ -6,7 +6,7 @@
     uv run eval/run_eval.py gate [--work DIR] [--write-baseline]
 
     uv run eval/run_eval.py prelabel [--refs REFS] [--work DIR] [--categories-only]
-    uv run eval/run_eval.py people [--refs REFS] [--work DIR] [--split dev|test]
+    uv run eval/run_eval.py people [--refs REFS] [--work DIR] [--split dev|test] [--replays]
                                    [--set people.KEY=VALUE ...] [--name NAME] [--write-baseline]
     uv run eval/run_eval.py categories [--work DIR] [--split dev|test] [--config FILE]
                                        [--mistakes] [--name NAME] [--write-baseline]
@@ -23,15 +23,17 @@ The labeled set is the folder named by ``TRIPSORT_EVAL_DIR`` (see eval/datasets.
 labels.html, a click-to-label page for it, into that folder (see eval/labels_page.py);
 ``people`` scores the checked rows of labels.csv, and the merge suggestions: how many the
 dev rows confirm, and the scores after accepting the confirmed ones or all of them. With
-``--refs``, both also check that no ref photo is a copy of a labeled photo (see
-eval/ref_copies.py).
+``--replays``, ``people`` also scores smaller trips cut from the labeled one: a random half
+and quarter of its kept photos, 5 draws each with fixed seeds, each analyzed as a trip of
+its own (see REPLAY_SIZES). With ``--refs``, both also check that no ref photo is a copy of
+a labeled photo (see eval/ref_copies.py).
 ``--work`` keeps the zips and the index between runs, so a run after the first only analyzes.
 ``categories`` scores the primary category of the checked rows (precision, recall, and F1
 per category, the confusion matrix) and the selfie hint; with ``--mistakes`` it writes
 category_mistakes.html, the dev rows it got wrong, into the labeled set's folder.
 ``prelabel --videos`` writes video_labels.csv and video_labels.html for the videos (Live
 Photo motion clips aside), split by SHA-256 like the photos; ``videos`` scores their
-people and categories.
+people and categories. Both splits keep copies on one side (see SPLIT_SAME_FACE).
 ``cull-prelabel`` writes cull_labels.csv and cull.html (see eval/cull_eval.py): the
 lowest-scoring quarter of the dev photos plus a random 50 of the rest, to label as fine,
 blurry, too dark, or blown out, and the dev bursts, to pick the shot to keep; ``cull``
@@ -86,7 +88,16 @@ from cull_eval import (
 )
 from cull_page import BurstCard, PhotoCard, write_cull_page
 from datasets import Source, build_sources, eval_dir, file_key  # the sibling modules
-from labels import CATEGORIES, Row, person_key, read_rows, split_for, write_rows
+from labels import (
+    CATEGORIES,
+    Row,
+    copy_groups,
+    face_copies,
+    person_key,
+    read_rows,
+    split_groups,
+    write_rows,
+)
 from labels_page import THUMB_SIDE, Box, Card, thumb_uri, write_page
 from metrics import (  # the sibling module, importable once the path is set
     Item,
@@ -111,15 +122,18 @@ from people_metrics import (
     solo_face,
 )
 from PIL import Image
-from ref_copies import ref_copies
+from ref_copies import SAME_FACE, ref_copies
 
 from tripsort import __version__
 from tripsort.api import Project
 from tripsort.clip.types import CLIP_MODEL_ID
 from tripsort.config import OTHER as OTHER_CATEGORY
+from tripsort.dedupe.copies import kept_images
+from tripsort.faces.analysis import analyze_people
 from tripsort.faces.names import display_name
 from tripsort.faces.people import RefsResult
 from tripsort.faces.suggest import Suggestion
+from tripsort.faces.types import EMBEDDING_SIZE as FACE_EMBEDDING_SIZE
 from tripsort.faces.types import FACE_MODEL_ID
 from tripsort.index.db import transaction
 from tripsort.ingest.decode import UnreadableImageError, decode_oriented
@@ -131,6 +145,20 @@ BASELINE = Path(__file__).resolve().parent / "baseline.json"
 LABELS_CSV = "labels.csv"
 LABELS_HTML = "labels.html"
 MISTAKES_HTML = "category_mistakes.html"
+
+# Copies sit on one side of the split, so tuning on dev never sees a twin of a test photo.
+# Photos join when they are shots of one burst, when their pHashes are within tripsort's
+# loosest near-copy distance (whatever their sizes or times, unlike tripsort's own rule), or
+# when they share a face at least SPLIT_SAME_FACE alike and their EXIF does not say two
+# shots (see labels.face_copies): crops, edits, and copies sent on, which a pHash misses.
+# The face test alone would chain the shots of a whole moment together, retakes minutes
+# apart included. Videos join when their lengths are within SAME_VIDEO_SECONDS and their
+# sampled frames, in order, are on average at least SAME_VIDEO_FRAMES alike to CLIP: a copy
+# a messaging app made smaller, which tripsort merges only when the bytes are the same.
+SPLIT_SAME_FACE = SAME_FACE
+SAME_VIDEO_SECONDS = 0.5
+SAME_VIDEO_FRAMES = 0.95
+PHOTO_COPY_TESTS = ("burst", "near_copy", "same_face")
 
 
 def evaluate_dedupe(data_dir: Path, work: Path) -> dict[str, Any]:
@@ -274,15 +302,20 @@ def people_project(
     project = Project.open(folder)
     project.ingest([s.zip_path for s in sources])
     with transaction(project.connection) as conn:
-        conn.execute("UPDATE faces SET person_id = NULL, match = NULL, cluster = NULL")
-        conn.execute("DELETE FROM people")
-        conn.execute("DELETE FROM meta WHERE key IN ('next_person_number', 'analysis_state')")
+        _forget_people(conn)
         if refs is None:
             conn.execute("DELETE FROM ref_images")
     if refs is not None:
         return project, sources, project.people.name_from_refs(refs)
     project.analyze()
     return project, sources, None
+
+
+def _forget_people(conn: Any) -> None:
+    """Forget every person and face assignment, so the next analysis clusters afresh."""
+    conn.execute("UPDATE faces SET person_id = NULL, match = NULL, cluster = NULL")
+    conn.execute("DELETE FROM people")
+    conn.execute("DELETE FROM meta WHERE key IN ('next_person_number', 'analysis_state')")
 
 
 def _refs_report(project: Project, refs: Path | None, named: RefsResult | None) -> dict[str, Any]:
@@ -372,11 +405,102 @@ def predictions(
     return files, kept
 
 
+def _photo_copies(project: Project, kept: dict[int, Prediction]) -> dict[str, set[tuple[int, int]]]:
+    """The pairs of kept photos to keep on one side of the split, by the test that joined
+    them: ``burst``, ``near_copy``, or ``same_face`` (see SPLIT_SAME_FACE). A copy tripsort
+    merged stands for its keeper, so its pHash and its faces count too."""
+    conn = project.connection
+    stands_for = {media_id: media_id for media_id in kept}
+    for keeper, member in conn.execute(
+        "SELECT k.media_id, m.media_id FROM group_members m "
+        "JOIN group_members k ON k.group_id = m.group_id AND k.is_keeper = 1 "
+        "JOIN media_groups g ON g.id = m.group_id WHERE g.kind = 'copy' AND m.is_keeper = 0"
+    ):
+        if int(keeper) in kept:
+            stands_for[int(member)] = int(keeper)
+    pairs: dict[str, set[tuple[int, int]]] = {test: set() for test in PHOTO_COPY_TESTS}
+
+    def join(test: str, a: int, b: int) -> None:
+        first, second = stands_for.get(a), stands_for.get(b)
+        if first is not None and second is not None and first != second:
+            pairs[test].add((min(first, second), max(first, second)))
+
+    first_shot: dict[int, int] = {}
+    for group_id, media_id in conn.execute(
+        "SELECT gm.group_id, gm.media_id FROM group_members gm "
+        "JOIN media_groups g ON g.id = gm.group_id WHERE g.kind = 'burst' "
+        "ORDER BY gm.group_id, gm.media_id"
+    ):
+        join("burst", first_shot.setdefault(int(group_id), int(media_id)), int(media_id))
+    hashed = [
+        (int(media_id), phash_to_int(str(phash)))
+        for media_id, phash in conn.execute(
+            "SELECT id, phash FROM media WHERE kind = 'image' AND phash IS NOT NULL ORDER BY id"
+        )
+        if int(media_id) in stands_for
+    ]
+    values = np.array([value for _, value in hashed], dtype=np.uint64)
+    limit = project.config.thresholds.phash_max_distance
+    for i, (media_id, _) in enumerate(hashed[:-1]):
+        for j in np.flatnonzero(np.bitwise_count(values[i + 1 :] ^ values[i]) <= limit):
+            join("near_copy", media_id, hashed[i + 1 + int(j)][0])
+    faces = [
+        (int(media_id), bytes(blob))
+        for media_id, blob in conn.execute(
+            "SELECT media_id, embedding FROM faces WHERE model_id = ? AND frame_ts < 0 "
+            "AND score >= ? ORDER BY media_id, face_index",
+            (FACE_MODEL_ID, project.config.people.min_face_score),
+        )
+        if int(media_id) in stands_for
+    ]
+    likeness: dict[tuple[int, int], float] = {}  # two photos -> their most alike faces
+    if faces:
+        vectors = np.frombuffer(b"".join(blob for _, blob in faces), dtype=np.float32).reshape(
+            len(faces), FACE_EMBEDDING_SIZE
+        )
+        for i, (media_id, _) in enumerate(faces[:-1]):
+            alike = vectors[i + 1 :] @ vectors[i]
+            for j in np.flatnonzero(alike >= SPLIT_SAME_FACE):
+                a, b = stands_for[media_id], stands_for[faces[i + 1 + int(j)][0]]
+                if a != b:
+                    pair = (min(a, b), max(a, b))
+                    likeness[pair] = max(likeness.get(pair, -1.0), float(alike[j]))
+    shots = {
+        int(media_id): f"{str(taken)[:19]}|{make or ''}|{model or ''}"
+        for media_id, taken, make, model in conn.execute(
+            "SELECT id, exif_datetime, camera_make, camera_model FROM media "
+            "WHERE kind = 'image' AND exif_datetime IS NOT NULL"
+        )
+        if int(media_id) in kept
+    }
+    for a, b in face_copies(likeness, shots):
+        join("same_face", a, b)
+    return pairs
+
+
+def _split_report(
+    groups: list[list[int]], pairs: dict[str, set[tuple[int, int]]]
+) -> dict[str, Any]:
+    """How copies were kept on one side of the split, in counts only."""
+    together = [len(group) for group in groups if len(group) > 1]
+    return {
+        "copy_groups": len(together),
+        "rows_in_copy_groups": sum(together),
+        "largest_copy_group": max(together, default=0),
+        "pairs": {test: len(found) for test, found in pairs.items()},
+    }
+
+
 def _guess_rows(
-    files: dict[str, int], kept: dict[int, Prediction], *, categories_only: bool = False
+    files: dict[str, int],
+    kept: dict[int, Prediction],
+    splits: dict[int, str],
+    *,
+    categories_only: bool = False,
 ) -> list[Row]:
-    """labels.csv rows pre-filled with tripsort's guesses. For a category-only set (photos
-    with no people) the shot is none and only the category is guessed."""
+    """labels.csv rows pre-filled with tripsort's guesses, each in the split ``splits`` gives
+    its photo. For a category-only set (photos with no people) the shot is none and only the
+    category is guessed."""
     first_file = {}
     for name, media_id in sorted(files.items()):
         first_file.setdefault(media_id, name)
@@ -385,7 +509,7 @@ def _guess_rows(
         Row(
             row=number,
             file=first_file[p.media_id],
-            split=split_for(p.sha256),
+            split=splits[p.media_id],
             checked=False,
             people=[] if categories_only else sorted(p.named),
             shot="none" if categories_only else p.shot or "",
@@ -413,13 +537,19 @@ def prelabel(
         refs_report = _refs_report(project, refs, named)
         files, kept = predictions(project, sources)
         csv_path = root / LABELS_CSV
+        split_copies = None
         if csv_path.exists() and not force:
             rows, problems = read_rows(csv_path)
             state = "kept as it was"
         else:
-            rows, problems = _guess_rows(files, kept, categories_only=categories_only), []
+            pairs = _photo_copies(project, kept)
+            joined = [pair for found in pairs.values() for pair in found]
+            splits = split_groups({m: p.sha256 for m, p in kept.items()}, joined)
+            rows = _guess_rows(files, kept, splits, categories_only=categories_only)
+            problems = []
             write_rows(csv_path, rows)
             state = "written"
+            split_copies = _split_report(copy_groups(kept, joined), pairs)
         csv_sha256 = hashlib.sha256(csv_path.read_bytes()).hexdigest()
         names = _button_names(named, rows)
         cards = []
@@ -463,6 +593,7 @@ def prelabel(
         "rows": len(rows),
         "dev": sum(r.split == "dev" for r in rows),
         "test": sum(r.split == "test" for r in rows),
+        "split_copies": split_copies,  # None when labels.csv was kept as it was
         "checked": sum(r.checked for r in rows),
         "label_problems": len(problems),
         "rows_without_photo": missing,
@@ -492,18 +623,19 @@ def _button_names(named: RefsResult | None, rows: list[Row]) -> list[str]:
 
 
 def evaluate_people(
-    root: Path, work: Path, refs: Path | None, split: str, overrides: dict[str, str]
+    root: Path,
+    work: Path,
+    refs: Path | None,
+    split: str,
+    overrides: dict[str, str],
+    *,
+    replays: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     rows, problems = read_rows(root / LABELS_CSV)
     if problems:  # row numbers and column names only
         return {"label_problems": len(problems), "first_problems": problems[:20]}
     project, sources, named = people_project(root, work, refs, overrides)
-    with project:
-        refs_report = _refs_report(project, refs, named)
-        files, kept = predictions(project, sources)
-        settings = asdict(project.config.people)
-        suggestions = project.people.suggestions()
     # The labeled people: anyone named in a checked row, of either split, and every ref name,
     # even one no checked row lists (the labeler lists them in every row they are in).
     everyone: Counter[str] = Counter(
@@ -514,6 +646,12 @@ def evaluate_people(
     without_ref = len(set(everyone) - ref_keys) if named is not None else None
     for key in ref_keys:
         everyone.setdefault(key, 0)
+    with project:
+        refs_report = _refs_report(project, refs, named)
+        files, kept = predictions(project, sources)
+        settings = asdict(project.config.people)
+        suggestions = project.people.suggestions()
+        smaller = evaluate_replays(project, sources, rows, split, everyone) if replays else None
     photos, checked, not_found = _scored_photos(rows, split, files, kept)
     return {
         "tripsort_version": __version__,
@@ -530,8 +668,64 @@ def evaluate_people(
         "suggestions": evaluate_suggestions(
             (root, work, refs, overrides), split, rows, files, kept, suggestions, everyone
         ),
+        "replays": smaller,
         "seconds": round(time.perf_counter() - started, 1),
     }
+
+
+REPLAY_SIZES = (0.5, 0.25)  # shares of the labeled trip's kept photos
+REPLAY_DRAWS = 5
+
+
+def replay_photos(kept: list[int], size: float, draw: int) -> set[int]:
+    """A random ``size`` of the kept photos ``kept`` (media ids), the same on every run."""
+    rng = np.random.default_rng(1000 * draw + round(size * 100))
+    chosen = rng.choice(np.array(sorted(kept)), size=round(len(kept) * size), replace=False)
+    return {int(m) for m in chosen}
+
+
+def evaluate_replays(
+    project: Project, sources: list[Source], rows: list[Row], split: str, everyone: Counter[str]
+) -> dict[str, Any]:
+    """People on smaller trips cut from the labeled one: half and a quarter of its kept
+    photos, REPLAY_DRAWS draws each, every draw analyzed from scratch as a trip of its own
+    (so a small one gets a small trip's settings), and the checked rows of ``split`` among
+    them scored as the whole trip's are. Leaves the people of the last draw in the index."""
+    conn = project.connection
+    kept = sorted(kept_images(conn))
+    out: dict[str, Any] = {}
+    for size in REPLAY_SIZES:
+        draws = []
+        for draw in range(1, REPLAY_DRAWS + 1):
+            chosen = replay_photos(kept, size, draw)
+            with transaction(conn):
+                _forget_people(conn)
+                stats = analyze_people(conn, project.config.people, only=chosen)
+            files, guesses = predictions(project, sources)
+            inside = [r for r in rows if files.get(r.file) in chosen]
+            photos, _, _ = _scored_photos(inside, split, files, guesses)
+            report = people_report(photos, everyone)
+            draws.append(
+                {
+                    "photos": len(chosen),
+                    "foreground_faces": stats.foreground_faces,
+                    "min_cluster_size": stats.min_cluster_size,
+                    "scored_rows": len(photos),
+                    "precision": report["micro"]["precision"],
+                    "recall": report["micro"]["recall"],
+                }
+            )
+        out[str(size)] = {
+            "draws": draws,
+            "precision": _mean([d["precision"] for d in draws]),
+            "recall": _mean([d["recall"] for d in draws]),
+        }
+    return out
+
+
+def _mean(values: list[float | None]) -> float | None:
+    known = [v for v in values if v is not None]
+    return round(sum(known) / len(known), 4) if known else None
 
 
 def _scored_photos(
@@ -1048,6 +1242,40 @@ def video_predictions(
     return files, guesses
 
 
+def _video_copies(project: Project, videos: set[int]) -> set[tuple[int, int]]:
+    """The pairs of ``videos`` to keep on one side of the split (see SAME_VIDEO_FRAMES)."""
+    conn = project.connection
+    seconds = {
+        int(media_id): float(duration)
+        for media_id, duration in conn.execute(
+            "SELECT id, duration_s FROM media WHERE kind = 'video' AND duration_s IS NOT NULL"
+        )
+    }
+    frames: defaultdict[int, list[bytes]] = defaultdict(list)
+    for media_id, blob in conn.execute(
+        "SELECT media_id, embedding FROM clip_embeddings WHERE frame_ts >= 0 AND model_id = ? "
+        "ORDER BY media_id, frame_ts",
+        (CLIP_MODEL_ID,),
+    ):
+        if int(media_id) in videos and int(media_id) in seconds:
+            frames[int(media_id)].append(bytes(blob))
+    stacks = {
+        media_id: np.frombuffer(b"".join(blobs), dtype=np.float32).reshape(len(blobs), -1)
+        for media_id, blobs in frames.items()
+    }
+    ids = sorted(stacks)
+    pairs = set()
+    for i, a in enumerate(ids):
+        for b in ids[i + 1 :]:
+            if (
+                abs(seconds[a] - seconds[b]) <= SAME_VIDEO_SECONDS
+                and len(stacks[a]) == len(stacks[b])
+                and float(np.mean(np.sum(stacks[a] * stacks[b], axis=1))) >= SAME_VIDEO_FRAMES
+            ):
+                pairs.add((a, b))
+    return pairs
+
+
 def _video_strip(project: Project, guess: VideoGuess) -> tuple[str | None, list[Box]]:
     """A strip of the video's first, middle, and last sampled frames, with their faces."""
     from tripsort.video.sample import frames
@@ -1108,8 +1336,8 @@ def video_prelabel(
     root: Path, work: Path, refs: Path | None, overrides: dict[str, str]
 ) -> dict[str, Any]:
     """video_labels.csv (unless it exists) and video_labels.html: one row per sampled video
-    (Live Photo motion clips are not videos here), split by SHA-256 like the photos, starting
-    from tripsort's guesses of its people and category."""
+    (Live Photo motion clips are not videos here), split by SHA-256 like the photos with
+    copies on one side, starting from tripsort's guesses of its people and category."""
     project, sources, named = people_project(root, work, refs, _matching(overrides))
     with project:
         files, guesses = video_predictions(project, sources)
@@ -1117,16 +1345,21 @@ def video_prelabel(
         for key in sorted(files):
             first_key.setdefault(files[key], key)
         csv_path = root / VIDEO_LABELS_CSV
+        split_copies = None
         if csv_path.exists():
             rows, problems = read_rows(csv_path)
             state = "kept as it was"
         else:
             ordered = sorted((first_key[m], g) for m, g in guesses.items() if m in first_key)
+            listed = {guess.media_id: guess.sha256 for _, guess in ordered}
+            pairs = _video_copies(project, set(listed))
+            splits = split_groups(listed, pairs)
+            split_copies = _split_report(copy_groups(listed, pairs), {"same_video": pairs})
             rows = [
                 Row(
                     row=number,
                     file=key,
-                    split=split_for(guess.sha256),
+                    split=splits[guess.media_id],
                     checked=False,
                     people=sorted(guess.named),
                     shot="none",
@@ -1162,12 +1395,14 @@ def video_prelabel(
             csv_sha256=csv_sha256,
             can_save=not problems,
             csv_name=VIDEO_LABELS_CSV,
+            videos=True,
         )
         refs_report = _refs_report(project, refs, named)  # reads the index: before it closes
     return {
         "videos": len(rows),
         "dev": sum(r.split == "dev" for r in rows),
         "test": sum(r.split == "test" for r in rows),
+        "split_copies": split_copies,  # None when video_labels.csv was kept as it was
         "checked": sum(r.checked for r in rows),
         "label_problems": len(problems),
         "videos_without_strip": sum(1 for c in cards if c.thumb is None),
@@ -1665,6 +1900,13 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--write-baseline", action="store_true")
         if name == "categories":
             p.add_argument("--mistakes", action="store_true", help=f"write {MISTAKES_HTML}")
+        if name == "people":
+            p.add_argument(
+                "--replays",
+                action="store_true",
+                help="also score smaller trips cut from this one: half and a quarter of its "
+                f"photos, {REPLAY_DRAWS} draws each",
+            )
     args = parser.parse_args(argv)
 
     if args.command == "dedupe":
@@ -1758,7 +2000,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         outcome = _hidden_errors(
             lambda: _with_work(
-                args.work, lambda w: evaluate_people(root, w, args.refs, args.split, overrides)
+                args.work,
+                lambda w: evaluate_people(
+                    root, w, args.refs, args.split, overrides, replays=args.replays
+                ),
             )
         )
     if outcome is None:

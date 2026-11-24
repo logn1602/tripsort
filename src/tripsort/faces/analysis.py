@@ -3,7 +3,8 @@
 The steps, in order:
 
 1. the foreground filter, per photo;
-2. clustering of the foreground faces of kept photos (a copy would count a face twice);
+2. clustering of the foreground faces of kept photos (a copy would count a face twice),
+   where 3 faces make a person on a small trip (see ``cluster.for_trip``);
 3. faces unlike their cluster's average face taken out, and unclustered foreground faces
    joining the most similar person, if close enough (see ``cluster``);
 4. carrying people over from the last analysis (see ``identity``);
@@ -16,6 +17,7 @@ The steps, in order:
 
 import sqlite3
 from collections import Counter, defaultdict
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,7 +25,13 @@ import numpy as np
 
 from tripsort.config import PeopleSettings
 from tripsort.dedupe.copies import kept_images
-from tripsort.faces.cluster import NOISE, attach_noise, cluster_embeddings, eject_outliers
+from tripsort.faces.cluster import (
+    NOISE,
+    attach_noise,
+    cluster_embeddings,
+    eject_outliers,
+    for_trip,
+)
 from tripsort.faces.foreground import foreground
 from tripsort.faces.identity import carry_over
 from tripsort.faces.names import display_name, name_key
@@ -53,13 +61,22 @@ class PeopleStats:
     refs_unmatched: list[str] = field(default_factory=list)  # ref names that named nobody
     # unnamed people who may be a named person split in two, most similar first
     suggestions: list[Suggestion] = field(default_factory=list)
+    min_cluster_size: int = 0  # the one this trip used: 3 on a small trip
 
 
 def analyze_people(
-    conn: sqlite3.Connection, settings: PeopleSettings, model_id: str = FACE_MODEL_ID
+    conn: sqlite3.Connection,
+    settings: PeopleSettings,
+    model_id: str = FACE_MODEL_ID,
+    *,
+    only: Collection[int] | None = None,
 ) -> PeopleStats:
-    """Run every step and store the results. Call inside a transaction."""
+    """Run every step and store the results. Call inside a transaction. With ``only`` (for
+    evaluations), the trip holds only those of its kept photos, as if the rest were never
+    added."""
     kept = kept_images(conn)
+    if only is not None:
+        kept &= set(only)
     scanned = {
         int(media_id)
         for (media_id,) in conn.execute(
@@ -105,10 +122,9 @@ def analyze_people(
     # 2-4. cluster, attach, carry over
     candidates = np.flatnonzero(fg & in_kept)
     vectors = emb[candidates]
-    labels = cluster_embeddings(vectors, settings)
-    labels = eject_outliers(
-        vectors, labels, settings.member_min_similarity, settings.min_cluster_size
-    )
+    trip = for_trip(settings, len(candidates))
+    labels = cluster_embeddings(vectors, trip)
+    labels = eject_outliers(vectors, labels, trip.member_min_similarity, trip.min_cluster_size)
     labels, attached = attach_noise(
         vectors, labels, media[candidates], settings.attach_min_similarity
     )
@@ -118,7 +134,7 @@ def analyze_people(
         [previous[i] for i in candidates],
         pinned,
         vectors,
-        min_faces=settings.min_cluster_size,
+        min_faces=trip.min_cluster_size,
     )
     sizes = Counter(int(label) for label in labels if label != NOISE)
     new_labels = sorted(
@@ -242,6 +258,7 @@ def analyze_people(
         ],
         refs_unmatched=sorted(set(refs) - set(matches.matched) - matches.settled),
         suggestions=suggest_merges(conn, settings.suggest_min_similarity),
+        min_cluster_size=trip.min_cluster_size,
     )
 
 

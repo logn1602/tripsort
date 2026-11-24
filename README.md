@@ -116,9 +116,13 @@ has every detail.
 | People | precision 1.00, recall 0.82 | a labeled trip's test half: 334 photos, 10 friends |
 | Shot types | 98.5% right | the same 334 photos |
 | Categories | 324 of 334 right; scenery 89% precision, 50% recall | the same 334 photos, most of them of people |
+| People, second trip | precision 1.00, recall 0.94 | a second labeled trip's test half: 434 photos, 9 of the same friends |
+| Shot types, second trip | 99.1% right | the same 434 photos |
+| Categories, second trip | 431 of 434 right; scenery 18 of 18, with no wrong photo | the same 434 photos, labeled so that a view with friends small in it stays scenery |
+| People, smaller trips | precision 0.99 and 1.00, recall 0.86 and 0.92 | half and a quarter of the second trip, 5 random draws each, scored on its test half |
 | Categories, no people | 44 of 51 right | photos of food, animals, documents, and things |
 | Bursts | pairwise precision 0.87, recall 1.00 | bursts made from real photos |
-| Video categories | 61 of 62 right | the labeled trip's held-out videos |
+| Video categories | 61 of 62 right, and 13 of 13 | the two trips' held-out videos |
 | Memory | 539 MB peak, 2.9 files per second | 976 files (238 of them videos) on an 8 GB laptop with an Intel i5-1135G7 |
 
 CI also runs a public check on every push: 25 public-domain and CC0 photos, plus generated
@@ -130,21 +134,31 @@ copies and bursts, must score within 2 points of
 tripsort is alpha: the folder layout and the Python API may still change before 1.0. Check
 the folders before you share them. These are the weak spots, most with an open issue:
 
-- **Smaller trips are less precise.** Replaying half and a quarter of the labeled trip, people
-  precision fell to about 0.98 and 0.93
+- **Smaller trips.** Since 0.5.0, a trip with at most 900 foreground faces (roughly 350 to
+  550 photos) lets 3 faces make a person instead of 4. Cut to half and a quarter of its
+  photos, the first labeled trip went from people precision 0.991 and 0.949 to 0.998 and
+  0.971, but that gain was shown on that one trip only. It costs some recall: the second
+  trip had no such wrong photos, and its replays lost up to 5 points of recall, with
+  precision unchanged. To go back to 4, set `small_trip_max_faces = 0` under `[people]`
   ([#8](https://github.com/logn1602/tripsort/issues/8)).
-- **The people numbers come from one labeled trip.** A second one is needed for an
-  independent check ([#10](https://github.com/logn1602/tripsort/issues/10)).
+- **The people numbers come from two trips of one group of friends.** The second trip has 9
+  of the first trip's 10 friends, each trip's test half was clustered together with the half
+  the settings were tuned on, and the labeler saw tripsort's people folders for the second
+  trip before labeling it, so the numbers may not carry over to other groups
+  ([#10](https://github.com/logn1602/tripsort/issues/10)).
 - **Look-alikes** such as siblings, and children who change fast, can be merged or split.
   Splitting a person in two is not possible yet.
-- **Scenery finds about half the views** ([#13](https://github.com/logn1602/tripsort/issues/13)),
-  some photos that are not documents land in `documents/`
+- **Categories.** A view with friends small in it stays scenery, and a photo where people
+  fill the frame goes to `other` on purpose. On the second trip, labeled that way, tripsort
+  found all 31 views with no wrong photo; the first trip's 50% partly reflects labels that
+  broke that rule ([#13](https://github.com/logn1602/tripsort/issues/13)). Some photos that
+  are not documents land in `documents/`
   ([#14](https://github.com/logn1602/tripsort/issues/14)), and animals can land in `other`,
   mostly when the detector finds a face in them
   ([#15](https://github.com/logn1602/tripsort/issues/15)). The other way round, a photo of a
   thing can land in `animals/`, as the road bike in the demo does
-  ([#22](https://github.com/logn1602/tripsort/issues/22)). A view with friends in front of it
-  goes to `other` on purpose. Category prompts work in English only.
+  ([#22](https://github.com/logn1602/tripsort/issues/22)). Category prompts work in English
+  only.
 - **Rejects are only suggestions.** On a fresh trip, half the photos flagged were fine, so
   they stay in every folder ([#18](https://github.com/logn1602/tripsort/issues/18)).
 - **The best shot of a burst** matched the shot a person preferred 14 times in 28, about
@@ -167,7 +181,7 @@ Settings go in `sorted/tripsort.toml`, and a change needs no re-reading of the z
 
 ```toml
 [people]
-min_cluster_size = 3          # a small trip: a friend in only 3 photos still gets a folder
+min_cluster_size = 3          # a friend in only 3 photos gets a folder on a big trip too
 
 [thresholds]
 hide_rejects = true           # rejects leave people/, shots/, and categories/

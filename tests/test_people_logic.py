@@ -12,7 +12,13 @@ from tripsort.commands import shell_arg
 from tripsort.config import load_config
 from tripsort.errors import PeopleError
 from tripsort.export.naming import person_folder
-from tripsort.faces.cluster import NOISE, attach_noise, cluster_embeddings, eject_outliers
+from tripsort.faces.cluster import (
+    NOISE,
+    attach_noise,
+    cluster_embeddings,
+    eject_outliers,
+    for_trip,
+)
 from tripsort.faces.foreground import foreground
 from tripsort.faces.identity import carry_over
 from tripsort.faces.names import check_name, display_name, name_key
@@ -155,6 +161,20 @@ def test_agglomerative_finds_the_people_and_drops_small_clusters() -> None:
     expected = partition(truth) - {frozenset({18, 19})}  # 2 faces: under min_cluster_size
     assert partition(labels) == expected
     assert (labels[18:] == NOISE).all()
+
+
+def test_a_small_trip_lets_three_faces_make_a_person() -> None:
+    assert (SETTINGS.min_cluster_size, SETTINGS.small_trip_max_faces) == (4, 900)
+    assert for_trip(SETTINGS, 900).min_cluster_size == 3
+    assert for_trip(SETTINGS, 901).min_cluster_size == 4
+    assert for_trip(SETTINGS, 901) is SETTINGS
+    off = dataclasses.replace(SETTINGS, small_trip_max_faces=0)
+    assert for_trip(off, 10).min_cluster_size == 4
+    lower = dataclasses.replace(SETTINGS, min_cluster_size=2)  # a lower setting stays
+    assert for_trip(lower, 10).min_cluster_size == 2
+    emb, truth = blobs([10, 3])  # a friend in 3 photos: a person only on a small trip
+    assert partition(cluster_embeddings(emb, for_trip(SETTINGS, len(emb)))) == partition(truth)
+    assert (cluster_embeddings(emb, SETTINGS)[10:] == NOISE).all()
 
 
 def test_too_few_faces_are_all_noise() -> None:

@@ -406,6 +406,7 @@ foreground_min_ratio = 0.30      # foreground: at least this share of the talles
 foreground_min_height = 0.03     # and at least this share of the image height
 cluster_method = "hdbscan"       # or "agglomerative"
 min_cluster_size = 4             # fewer faces than this never form a person
+small_trip_max_faces = 900       # on a trip with at most this many foreground faces, 3 are enough
 ref_min_similarity = 0.5         # a refs/ photo names the most similar person if this close
 suggest_min_similarity = 0.6     # suggest merging an unnamed person into a named one this close
 selfie_min_score = 1.0           # CLIP's selfie hint for photos whose lens model is silent; 1.0: off
@@ -413,8 +414,13 @@ selfie_min_score = 1.0           # CLIP's selfie hint for photos whose lens mode
 
 Categories are `[categories.<name>]` tables with a `prompts` list (see Categories and bursts).
 
-For a small trip where a friend is in only 3 photos, set `min_cluster_size = 3`. Raising
-it splits people less on big trips but drops friends with few photos.
+On a small trip, with at most 900 foreground faces (roughly 350 to 550 photos, depending on
+how many faces they show), 3 faces are enough for a person; a bigger trip needs
+`min_cluster_size` (4). With fewer faces, a friend in only a few photos would get no person,
+and their ref could name a look-alike instead. Set `min_cluster_size = 3` to give a friend
+in only 3 photos a folder on a big trip too, or `small_trip_max_faces = 0` to always need
+`min_cluster_size`. Raising `min_cluster_size` splits people less on big trips but drops
+friends with few photos.
 
 Changing a threshold needs no re-reading of the zips: faces are found once, at ingest, and
 `tripsort analyze` and `tripsort export` (or `run`) apply any threshold in seconds.

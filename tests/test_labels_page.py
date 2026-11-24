@@ -95,6 +95,27 @@ def test_the_storage_ids_follow_the_rows_and_their_labels(tmp_path: Path) -> Non
     assert "://" not in page.read_text(encoding="utf-8")  # nothing is fetched from anywhere
 
 
+def test_each_page_shows_its_labeling_rules(tmp_path: Path) -> None:
+    photos, videos = tmp_path / "labels.html", tmp_path / "video_labels.html"
+    write_page(photos, make_cards(START), NAMES)
+    write_page(videos, make_cards(START), NAMES, csv_name="video_labels.csv", videos=True)
+    photo_page, video_page = (p.read_text(encoding="utf-8") for p in (photos, videos))
+    for page in (photo_page, video_page):
+        assert '<details class="rules" open>' in page  # shown, not folded away
+        assert "only the names on the buttons, the people you have a ref photo for" in page
+        # the scenery rule of issue #13
+        assert "scenery when the view is the main subject, even with\nfriends small in it" in page
+        assert "other when people fill the frame" in page
+    assert "counting everyone, named or not" in photo_page
+    assert "<dt>S, G, N</dt>" in photo_page
+    assert (page_json(photo_page)["videos"], page_json(video_page)["videos"]) == (False, True)
+    assert "Videos get no shot type and no selfie" in video_page
+    assert "<dt>S, G, N</dt>" not in video_page
+    assert "<dt>Y</dt>" not in video_page
+    assert "Save video_labels.csv" in video_page
+    assert "labels.csv" not in video_page.replace("video_labels.csv", "")
+
+
 # the page in a browser
 
 
@@ -339,6 +360,40 @@ scenario(async () => {
         True,
         "other",
     )
+
+
+@needs_browser
+def test_videos_are_labeled_for_people_and_category(tmp_path: Path) -> None:
+    page = tmp_path / "video_labels.html"
+    rows = [(1, "dev", False, ["Zorblax"], "none", False, "other"), START[1]]
+    write_page(page, make_cards(rows), NAMES, csv_name="video_labels.csv", videos=True)
+    result = run_page(
+        page,
+        tmp_path / "profile",
+        """
+scenario(async () => {
+  const kinds = Array.from(
+    document.querySelectorAll("#row-1 button[data-kind]"), (b) => b.dataset.kind);
+  const out = {kinds: Array.from(new Set(kinds)).sort()};
+  press("g");  // no shot type to label: the key does nothing
+  press("y");  // nor selfie
+  out.afterKeys = pressed(1);
+  press("Enter");
+  out.afterFirst = current();
+  press("Enter");  // row 2 has no category yet
+  out.hint = document.querySelector("#row-2 .hint").textContent;
+  press("v");
+  press("Enter");
+  out.progress = text("progress");
+  return out;
+});
+""",
+    )
+    assert result["kinds"] == ["category", "checked", "name"]
+    assert set(result["afterKeys"]) == {"name:Zorblax", "category:other"}
+    assert result["afterFirst"] == "row-2"
+    assert result["hint"] == "Pick a category first."
+    assert result["progress"].startswith("2 of 2 checked")
 
 
 @needs_browser
