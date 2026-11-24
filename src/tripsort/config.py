@@ -34,6 +34,7 @@ _RANGES: dict[str, tuple[float, float]] = {
     "foreground_min_ratio": (0.0, 1.0),
     "foreground_min_height": (0.0, 1.0),
     "min_cluster_size": (2, 10_000),
+    "small_trip_max_faces": (0, 10_000_000),
     "min_samples": (1, 10_000),
     "agglomerative_min_similarity": (-1.0, 1.0),
     "member_min_similarity": (-1.0, 1.0),
@@ -91,6 +92,7 @@ class PeopleSettings:
     foreground_min_height: float
     cluster_method: str
     min_cluster_size: int
+    small_trip_max_faces: int  # at most this many foreground faces: 3 faces make a person
     min_samples: int
     agglomerative_min_similarity: float
     member_min_similarity: float

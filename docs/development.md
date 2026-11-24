@@ -105,7 +105,7 @@ phone) named by `TRIPSORT_EVAL_DIR`, kept outside the repository.
 
 ```console
 uv run eval/run_eval.py prelabel --refs REFS --work WORK     # labels.csv + labels.html
-uv run eval/run_eval.py people   --refs REFS --work WORK [--split dev|test] [--set people.KEY=VALUE]
+uv run eval/run_eval.py people   --refs REFS --work WORK [--split dev|test] [--replays] [--set people.KEY=VALUE]
 ```
 
 `prelabel` writes `labels.csv` (one row per kept photo, filled with tripsort's guesses) and
@@ -142,6 +142,11 @@ of the suggested person's `dev` photos list the named person, which confirms it 
 them do; then the split's scores after merging the confirmed suggestions (a user who
 checks each one) and after merging every suggestion (a user who accepts them all). Which
 suggestions count as confirmed always comes from the `dev` rows, even when scoring `test`.
+With `--replays`, `people` also scores smaller trips cut from the labeled one: a random half
+and a quarter of its kept photos, 5 draws each with fixed seeds, each analyzed from scratch
+as a trip of its own, so a small draw gets the small-trip rule (`small_trip_max_faces`).
+The checked rows of the split among them are scored as the whole trip's are, and each draw
+prints its precision, recall, foreground faces, and the `min_cluster_size` it used.
 Both commands also check that no ref photo is a copy of a labeled
 photo (the same file, a near copy by pHash, or nearly the same face) and print the counts,
 giving any flagged photo by position. Only numbers are printed, with people shown as p1,

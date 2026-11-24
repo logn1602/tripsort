@@ -406,6 +406,42 @@ def test_settings_can_be_tried_without_editing_files(
     assert result["people"]["predicted_people"] == 0  # the fake's faces score 0.95
 
 
+def test_replays_score_smaller_trips_cut_from_the_labeled_one(
+    labeled_set: Path,
+    marker_faces: MarkerFaceAnalyzer,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    work = tmp_path / "work"
+    run(capsys, "prelabel", "--work", work)
+    label_everything(labeled_set, {"0": "a", "1": "b"})
+    code, out = run(capsys, "people", "--work", work, "--replays")
+    assert code == 0
+    replays = json.loads(out)["replays"]
+    assert list(replays) == ["0.5", "0.25"]
+    for size, photos in (("0.5", 5), ("0.25", 2)):  # of 10 kept photos
+        draws = replays[size]["draws"]
+        assert len(draws) == run_eval.REPLAY_DRAWS
+        assert {d["photos"] for d in draws} == {photos}
+        assert {d["min_cluster_size"] for d in draws} == {3}  # a trip this small needs 3
+        assert all(0 < d["foreground_faces"] <= photos + 1 for d in draws)
+        assert all(d["precision"] in (1.0, None) for d in draws)
+    code, out = run(capsys, "people", "--work", work, "--replays")
+    assert json.loads(out)["replays"] == replays  # the same draws every run
+    code, out = run(capsys, "people", "--work", work)
+    assert json.loads(out)["replays"] is None
+
+
+def test_replay_draws_are_fixed_and_differ() -> None:
+    kept = list(range(100, 300))
+    first = run_eval.replay_photos(kept, 0.25, 1)
+    assert first == run_eval.replay_photos(list(reversed(kept)), 0.25, 1)
+    assert len(first) == 50
+    assert first <= set(kept)
+    assert first != run_eval.replay_photos(kept, 0.25, 2)
+    assert len(run_eval.replay_photos(kept, 0.5, 1)) == 100
+
+
 def test_label_problems_name_rows_and_columns_only(
     labeled_set: Path,
     marker_faces: MarkerFaceAnalyzer,

@@ -6,7 +6,7 @@
     uv run eval/run_eval.py gate [--work DIR] [--write-baseline]
 
     uv run eval/run_eval.py prelabel [--refs REFS] [--work DIR] [--categories-only]
-    uv run eval/run_eval.py people [--refs REFS] [--work DIR] [--split dev|test]
+    uv run eval/run_eval.py people [--refs REFS] [--work DIR] [--split dev|test] [--replays]
                                    [--set people.KEY=VALUE ...] [--name NAME] [--write-baseline]
     uv run eval/run_eval.py categories [--work DIR] [--split dev|test] [--config FILE]
                                        [--mistakes] [--name NAME] [--write-baseline]
@@ -23,8 +23,10 @@ The labeled set is the folder named by ``TRIPSORT_EVAL_DIR`` (see eval/datasets.
 labels.html, a click-to-label page for it, into that folder (see eval/labels_page.py);
 ``people`` scores the checked rows of labels.csv, and the merge suggestions: how many the
 dev rows confirm, and the scores after accepting the confirmed ones or all of them. With
-``--refs``, both also check that no ref photo is a copy of a labeled photo (see
-eval/ref_copies.py).
+``--replays``, ``people`` also scores smaller trips cut from the labeled one: a random half
+and quarter of its kept photos, 5 draws each with fixed seeds, each analyzed as a trip of
+its own (see REPLAY_SIZES). With ``--refs``, both also check that no ref photo is a copy of
+a labeled photo (see eval/ref_copies.py).
 ``--work`` keeps the zips and the index between runs, so a run after the first only analyzes.
 ``categories`` scores the primary category of the checked rows (precision, recall, and F1
 per category, the confusion matrix) and the selfie hint; with ``--mistakes`` it writes
@@ -126,6 +128,8 @@ from tripsort import __version__
 from tripsort.api import Project
 from tripsort.clip.types import CLIP_MODEL_ID
 from tripsort.config import OTHER as OTHER_CATEGORY
+from tripsort.dedupe.copies import kept_images
+from tripsort.faces.analysis import analyze_people
 from tripsort.faces.names import display_name
 from tripsort.faces.people import RefsResult
 from tripsort.faces.suggest import Suggestion
@@ -298,15 +302,20 @@ def people_project(
     project = Project.open(folder)
     project.ingest([s.zip_path for s in sources])
     with transaction(project.connection) as conn:
-        conn.execute("UPDATE faces SET person_id = NULL, match = NULL, cluster = NULL")
-        conn.execute("DELETE FROM people")
-        conn.execute("DELETE FROM meta WHERE key IN ('next_person_number', 'analysis_state')")
+        _forget_people(conn)
         if refs is None:
             conn.execute("DELETE FROM ref_images")
     if refs is not None:
         return project, sources, project.people.name_from_refs(refs)
     project.analyze()
     return project, sources, None
+
+
+def _forget_people(conn: Any) -> None:
+    """Forget every person and face assignment, so the next analysis clusters afresh."""
+    conn.execute("UPDATE faces SET person_id = NULL, match = NULL, cluster = NULL")
+    conn.execute("DELETE FROM people")
+    conn.execute("DELETE FROM meta WHERE key IN ('next_person_number', 'analysis_state')")
 
 
 def _refs_report(project: Project, refs: Path | None, named: RefsResult | None) -> dict[str, Any]:
@@ -614,18 +623,19 @@ def _button_names(named: RefsResult | None, rows: list[Row]) -> list[str]:
 
 
 def evaluate_people(
-    root: Path, work: Path, refs: Path | None, split: str, overrides: dict[str, str]
+    root: Path,
+    work: Path,
+    refs: Path | None,
+    split: str,
+    overrides: dict[str, str],
+    *,
+    replays: bool = False,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     rows, problems = read_rows(root / LABELS_CSV)
     if problems:  # row numbers and column names only
         return {"label_problems": len(problems), "first_problems": problems[:20]}
     project, sources, named = people_project(root, work, refs, overrides)
-    with project:
-        refs_report = _refs_report(project, refs, named)
-        files, kept = predictions(project, sources)
-        settings = asdict(project.config.people)
-        suggestions = project.people.suggestions()
     # The labeled people: anyone named in a checked row, of either split, and every ref name,
     # even one no checked row lists (the labeler lists them in every row they are in).
     everyone: Counter[str] = Counter(
@@ -636,6 +646,12 @@ def evaluate_people(
     without_ref = len(set(everyone) - ref_keys) if named is not None else None
     for key in ref_keys:
         everyone.setdefault(key, 0)
+    with project:
+        refs_report = _refs_report(project, refs, named)
+        files, kept = predictions(project, sources)
+        settings = asdict(project.config.people)
+        suggestions = project.people.suggestions()
+        smaller = evaluate_replays(project, sources, rows, split, everyone) if replays else None
     photos, checked, not_found = _scored_photos(rows, split, files, kept)
     return {
         "tripsort_version": __version__,
@@ -652,8 +668,64 @@ def evaluate_people(
         "suggestions": evaluate_suggestions(
             (root, work, refs, overrides), split, rows, files, kept, suggestions, everyone
         ),
+        "replays": smaller,
         "seconds": round(time.perf_counter() - started, 1),
     }
+
+
+REPLAY_SIZES = (0.5, 0.25)  # shares of the labeled trip's kept photos
+REPLAY_DRAWS = 5
+
+
+def replay_photos(kept: list[int], size: float, draw: int) -> set[int]:
+    """A random ``size`` of the kept photos ``kept`` (media ids), the same on every run."""
+    rng = np.random.default_rng(1000 * draw + round(size * 100))
+    chosen = rng.choice(np.array(sorted(kept)), size=round(len(kept) * size), replace=False)
+    return {int(m) for m in chosen}
+
+
+def evaluate_replays(
+    project: Project, sources: list[Source], rows: list[Row], split: str, everyone: Counter[str]
+) -> dict[str, Any]:
+    """People on smaller trips cut from the labeled one: half and a quarter of its kept
+    photos, REPLAY_DRAWS draws each, every draw analyzed from scratch as a trip of its own
+    (so a small one gets a small trip's settings), and the checked rows of ``split`` among
+    them scored as the whole trip's are. Leaves the people of the last draw in the index."""
+    conn = project.connection
+    kept = sorted(kept_images(conn))
+    out: dict[str, Any] = {}
+    for size in REPLAY_SIZES:
+        draws = []
+        for draw in range(1, REPLAY_DRAWS + 1):
+            chosen = replay_photos(kept, size, draw)
+            with transaction(conn):
+                _forget_people(conn)
+                stats = analyze_people(conn, project.config.people, only=chosen)
+            files, guesses = predictions(project, sources)
+            inside = [r for r in rows if files.get(r.file) in chosen]
+            photos, _, _ = _scored_photos(inside, split, files, guesses)
+            report = people_report(photos, everyone)
+            draws.append(
+                {
+                    "photos": len(chosen),
+                    "foreground_faces": stats.foreground_faces,
+                    "min_cluster_size": stats.min_cluster_size,
+                    "scored_rows": len(photos),
+                    "precision": report["micro"]["precision"],
+                    "recall": report["micro"]["recall"],
+                }
+            )
+        out[str(size)] = {
+            "draws": draws,
+            "precision": _mean([d["precision"] for d in draws]),
+            "recall": _mean([d["recall"] for d in draws]),
+        }
+    return out
+
+
+def _mean(values: list[float | None]) -> float | None:
+    known = [v for v in values if v is not None]
+    return round(sum(known) / len(known), 4) if known else None
 
 
 def _scored_photos(
@@ -1828,6 +1900,13 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--write-baseline", action="store_true")
         if name == "categories":
             p.add_argument("--mistakes", action="store_true", help=f"write {MISTAKES_HTML}")
+        if name == "people":
+            p.add_argument(
+                "--replays",
+                action="store_true",
+                help="also score smaller trips cut from this one: half and a quarter of its "
+                f"photos, {REPLAY_DRAWS} draws each",
+            )
     args = parser.parse_args(argv)
 
     if args.command == "dedupe":
@@ -1921,7 +2000,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         outcome = _hidden_errors(
             lambda: _with_work(
-                args.work, lambda w: evaluate_people(root, w, args.refs, args.split, overrides)
+                args.work,
+                lambda w: evaluate_people(
+                    root, w, args.refs, args.split, overrides, replays=args.replays
+                ),
             )
         )
     if outcome is None:

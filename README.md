@@ -167,7 +167,7 @@ Settings go in `sorted/tripsort.toml`, and a change needs no re-reading of the z
 
 ```toml
 [people]
-min_cluster_size = 3          # a small trip: a friend in only 3 photos still gets a folder
+min_cluster_size = 3          # a friend in only 3 photos gets a folder on a big trip too
 
 [thresholds]
 hide_rejects = true           # rejects leave people/, shots/, and categories/
