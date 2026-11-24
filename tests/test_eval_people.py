@@ -18,7 +18,7 @@ from fake_faces import MarkerFaceAnalyzer, face_photo
 from PIL import Image
 
 from eval import labels as labels_module
-from eval import people_metrics
+from eval import people_metrics, run_eval
 from eval.people_metrics import Photo
 from eval.run_eval import _hidden_errors
 from eval.run_eval import main as run_eval_main
@@ -40,7 +40,15 @@ def labeled_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     face_photo([], seed=21).save(b / "view.jpg")
     (b / "notes.txt").write_text("ignored")
     monkeypatch.setenv("TRIPSORT_EVAL_DIR", str(root))
+    different_photos_of_a_person(monkeypatch)
     return root
+
+
+def different_photos_of_a_person(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fake faces of one person are about 0.95 alike in any two photos, where real ones
+    stayed at 0.81 or below in different photos: raise the split's same-face bar above the
+    fakes, so photos of one fake person are split as different photos, not as copies."""
+    monkeypatch.setattr(run_eval, "SPLIT_SAME_FACE", 0.99)
 
 
 def run(capsys: pytest.CaptureFixture[str], *args: str | Path) -> tuple[int, str]:
@@ -150,8 +158,6 @@ def test_refs_match_labels_by_name(
     assert (guesses["pair"], guesses["view"]) == ("Zorblax;quuxine", "")
     label_everything(labeled_set, {"0": "zorblax", "1": "Quuxine"})  # case does not matter
     baseline = tmp_path / "baseline.json"
-    import eval.run_eval as run_eval
-
     run_eval.BASELINE = baseline
     code, out = run(
         capsys, "people", "--work", work, "--refs", refs, "--write-baseline", "--name", "t"
