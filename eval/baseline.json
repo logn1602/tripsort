@@ -2451,6 +2451,642 @@
       },
       "split": "dev",
       "tripsort_version": "0.4.1"
+    },
+    "trip2_categories_test": {
+      "bursts_on_this_set": {
+        "bursts": 110,
+        "consecutive_shots": {
+          "10_to_60s": {
+            "0.80-0.85": 18,
+            "0.85-0.90": 43,
+            "0.90-0.92": 18,
+            "0.92-0.94": 14,
+            "0.94-0.96": 10,
+            "0.96-0.98": 2,
+            "<0.80": 45,
+            ">=0.98": 0
+          },
+          "60_to_600s": {
+            "0.80-0.85": 2,
+            "0.85-0.90": 4,
+            "0.90-0.92": 1,
+            "0.92-0.94": 0,
+            "0.94-0.96": 1,
+            "0.96-0.98": 0,
+            "<0.80": 26,
+            ">=0.98": 0
+          },
+          "under_10s": {
+            "0.80-0.85": 20,
+            "0.85-0.90": 40,
+            "0.90-0.92": 38,
+            "0.92-0.94": 45,
+            "0.94-0.96": 58,
+            "0.96-0.98": 39,
+            "<0.80": 15,
+            ">=0.98": 5
+          }
+        },
+        "photos_in_bursts": 252
+      },
+      "categories": {
+        "accuracy": 0.9931,
+        "confusion": {
+          "labels": [
+            "scenery",
+            "animals",
+            "food",
+            "documents",
+            "other"
+          ],
+          "rows_labeled_columns_predicted": [
+            [
+              18,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              10,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              3,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              16,
+              3
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              384
+            ]
+          ]
+        },
+        "labeled_categories": [
+          "scenery",
+          "animals",
+          "food",
+          "documents"
+        ],
+        "macro_f1_labeled": 0.9786,
+        "per_category": {
+          "animals": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 10,
+            "recall": 1.0,
+            "right": 10,
+            "support": 10
+          },
+          "documents": {
+            "f1": 0.9143,
+            "precision": 1.0,
+            "predicted": 16,
+            "recall": 0.8421,
+            "right": 16,
+            "support": 19
+          },
+          "food": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 3,
+            "recall": 1.0,
+            "right": 3,
+            "support": 3
+          },
+          "other": {
+            "f1": 0.9961,
+            "precision": 0.9922,
+            "predicted": 387,
+            "recall": 1.0,
+            "right": 384,
+            "support": 384
+          },
+          "scenery": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 18,
+            "recall": 1.0,
+            "right": 18,
+            "support": 18
+          }
+        },
+        "photos": 434,
+        "wrong_photos": {}
+      },
+      "checked_rows": 434,
+      "clip_model": "clip-image-int8-vit-b-32-openai-2/center224-v1",
+      "mistakes_page": null,
+      "right_rows": [
+        2,
+        4,
+        6,
+        8,
+        14,
+        15,
+        16,
+        17,
+        19,
+        20,
+        21,
+        26,
+        27,
+        32,
+        33,
+        34,
+        36,
+        39,
+        40,
+        42,
+        43,
+        46,
+        47,
+        50,
+        52,
+        60,
+        62,
+        65,
+        66,
+        69,
+        71,
+        73,
+        75,
+        77,
+        81,
+        84,
+        89,
+        93,
+        95,
+        99,
+        101,
+        102,
+        105,
+        106,
+        112,
+        113,
+        114,
+        115,
+        116,
+        118,
+        119,
+        121,
+        123,
+        124,
+        125,
+        127,
+        128,
+        130,
+        133,
+        135,
+        138,
+        143,
+        146,
+        147,
+        149,
+        150,
+        151,
+        156,
+        157,
+        165,
+        166,
+        168,
+        169,
+        171,
+        173,
+        174,
+        176,
+        177,
+        181,
+        183,
+        187,
+        188,
+        190,
+        191,
+        197,
+        203,
+        208,
+        209,
+        211,
+        212,
+        214,
+        217,
+        218,
+        219,
+        220,
+        222,
+        223,
+        225,
+        226,
+        227,
+        228,
+        229,
+        230,
+        232,
+        233,
+        235,
+        237,
+        238,
+        241,
+        242,
+        245,
+        246,
+        247,
+        248,
+        249,
+        250,
+        251,
+        252,
+        253,
+        255,
+        256,
+        257,
+        259,
+        260,
+        263,
+        264,
+        265,
+        266,
+        267,
+        268,
+        270,
+        272,
+        276,
+        277,
+        278,
+        279,
+        281,
+        282,
+        284,
+        285,
+        286,
+        287,
+        290,
+        291,
+        292,
+        293,
+        297,
+        299,
+        300,
+        302,
+        303,
+        308,
+        309,
+        310,
+        311,
+        312,
+        319,
+        320,
+        321,
+        322,
+        324,
+        325,
+        328,
+        329,
+        333,
+        335,
+        338,
+        341,
+        342,
+        343,
+        350,
+        353,
+        354,
+        355,
+        356,
+        358,
+        361,
+        363,
+        366,
+        368,
+        372,
+        373,
+        374,
+        375,
+        376,
+        377,
+        378,
+        379,
+        383,
+        384,
+        386,
+        387,
+        389,
+        390,
+        394,
+        396,
+        397,
+        398,
+        401,
+        402,
+        405,
+        406,
+        409,
+        411,
+        412,
+        419,
+        420,
+        421,
+        423,
+        425,
+        427,
+        428,
+        429,
+        430,
+        432,
+        444,
+        445,
+        447,
+        451,
+        454,
+        457,
+        458,
+        460,
+        463,
+        465,
+        468,
+        470,
+        472,
+        473,
+        474,
+        476,
+        477,
+        478,
+        479,
+        481,
+        482,
+        484,
+        485,
+        488,
+        490,
+        491,
+        492,
+        493,
+        495,
+        496,
+        500,
+        502,
+        507,
+        509,
+        511,
+        512,
+        518,
+        521,
+        524,
+        526,
+        527,
+        529,
+        530,
+        534,
+        535,
+        537,
+        539,
+        540,
+        541,
+        543,
+        544,
+        546,
+        548,
+        549,
+        550,
+        551,
+        553,
+        554,
+        558,
+        559,
+        560,
+        561,
+        562,
+        563,
+        565,
+        567,
+        570,
+        572,
+        575,
+        577,
+        578,
+        582,
+        583,
+        585,
+        587,
+        591,
+        593,
+        595,
+        596,
+        597,
+        598,
+        601,
+        605,
+        606,
+        608,
+        613,
+        616,
+        617,
+        623,
+        624,
+        626,
+        627,
+        628,
+        630,
+        631,
+        633,
+        634,
+        635,
+        637,
+        641,
+        642,
+        644,
+        645,
+        650,
+        652,
+        653,
+        657,
+        661,
+        662,
+        663,
+        665,
+        666,
+        668,
+        669,
+        670,
+        671,
+        672,
+        674,
+        677,
+        678,
+        680,
+        683,
+        684,
+        686,
+        687,
+        688,
+        693,
+        694,
+        696,
+        697,
+        698,
+        700,
+        701,
+        706,
+        707,
+        708,
+        711,
+        712,
+        719,
+        722,
+        723,
+        726,
+        729,
+        732,
+        735,
+        736,
+        738,
+        739,
+        741,
+        742,
+        745,
+        749,
+        750,
+        751,
+        754,
+        756,
+        759,
+        760,
+        762,
+        763,
+        765,
+        768,
+        773,
+        780,
+        781,
+        782,
+        787,
+        788,
+        789,
+        790,
+        792,
+        795,
+        797,
+        798,
+        800,
+        801,
+        803,
+        804,
+        807,
+        808,
+        809,
+        813,
+        814,
+        817,
+        819,
+        821,
+        822,
+        824,
+        825,
+        827,
+        828,
+        830,
+        831,
+        832,
+        833,
+        836,
+        838,
+        840,
+        841,
+        842,
+        845,
+        846,
+        847,
+        849,
+        852,
+        854,
+        859,
+        861,
+        863,
+        866,
+        869,
+        870,
+        872,
+        875,
+        877,
+        880
+      ],
+      "rows_not_found": 0,
+      "rows_not_scored": 0,
+      "seconds": 197.7,
+      "selfie": {
+        "free_labels": {
+          "front_camera": 68,
+          "photos": 441,
+          "precision": null,
+          "recall": 0.0
+        },
+        "from_the_hint": 0,
+        "from_the_hint_labeled_selfie": 0,
+        "labeled": 34,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "settings": {
+        "categories": {
+          "animals": [
+            "a photo of a dog",
+            "a photo of a cat",
+            "a photo of a bird",
+            "a photo of a wild animal"
+          ],
+          "documents": [
+            "a screenshot of a phone screen",
+            "a photo of a receipt",
+            "a photo of a ticket",
+            "a photo of a map"
+          ],
+          "food": [
+            "a photo of food on a plate",
+            "a photo of a meal at a restaurant"
+          ],
+          "other": [
+            "a photo of people",
+            "a photo of friends posing",
+            "a selfie",
+            "a photo of a room",
+            "a photo",
+            "a photo of an object",
+            "a photo of a vehicle",
+            "a photo of furniture"
+          ],
+          "scenery": [
+            "a landscape photo",
+            "a photo of a beach",
+            "a scenic mountain view",
+            "a city skyline",
+            "a sunset over the water",
+            "a photo of nature",
+            "a view of the sea",
+            "a photo of a lake",
+            "a panoramic view of a valley",
+            "a landscape with no people"
+          ]
+        },
+        "category_min_score": 0.3,
+        "selfie_min_score": 1.0
+      },
+      "split": "test",
+      "tripsort_version": "0.5.0"
     }
   },
   "cull": {
@@ -4077,6 +4713,570 @@
         "with_two_candidates": 0
       },
       "tripsort_version": "0.4.1"
+    },
+    "trip2_test": {
+      "categories_labeled": {
+        "animals": 10,
+        "documents": 19,
+        "food": 3,
+        "other": 384,
+        "scenery": 18
+      },
+      "checked_rows": 434,
+      "faces": {
+        "completeness": 0.9822,
+        "homogeneity": 1.0,
+        "solo_faces": 106,
+        "unassigned": 0.0472,
+        "v_measure": 0.991
+      },
+      "labeled_names_without_a_ref": 0,
+      "people": {
+        "labeled_people": 10,
+        "macro": {
+          "precision": 1.0,
+          "recall": 0.9253
+        },
+        "matched_by_name": 9,
+        "matched_by_photos": 0,
+        "micro": {
+          "precision": 1.0,
+          "recall": 0.9395
+        },
+        "other_predicted_people": 9,
+        "per_person": [
+          {
+            "matched": true,
+            "person": "p1",
+            "photos": 146,
+            "precision": 1.0,
+            "recall": 0.9452
+          },
+          {
+            "matched": true,
+            "person": "p2",
+            "photos": 103,
+            "precision": 1.0,
+            "recall": 0.9612
+          },
+          {
+            "matched": true,
+            "person": "p3",
+            "photos": 72,
+            "precision": 1.0,
+            "recall": 0.9167
+          },
+          {
+            "matched": true,
+            "person": "p4",
+            "photos": 57,
+            "precision": 1.0,
+            "recall": 0.9825
+          },
+          {
+            "matched": true,
+            "person": "p5",
+            "photos": 32,
+            "precision": 1.0,
+            "recall": 1.0
+          },
+          {
+            "matched": true,
+            "person": "p6",
+            "photos": 31,
+            "precision": 1.0,
+            "recall": 0.9032
+          },
+          {
+            "matched": true,
+            "person": "p7",
+            "photos": 26,
+            "precision": 1.0,
+            "recall": 0.8077
+          },
+          {
+            "matched": true,
+            "person": "p8",
+            "photos": 28,
+            "precision": 1.0,
+            "recall": 0.9286
+          },
+          {
+            "matched": true,
+            "person": "p9",
+            "photos": 17,
+            "precision": 1.0,
+            "recall": 0.8824
+          },
+          {
+            "matched": false,
+            "person": "p10",
+            "photos": 0,
+            "precision": null,
+            "recall": null
+          }
+        ],
+        "predicted_people": 18
+      },
+      "ref_copies": {
+        "closest_phash_distance": 16,
+        "flagged": [],
+        "highest_face_similarity": 0.8,
+        "near_copy": 0,
+        "ref_photos": 28,
+        "same_face": 0,
+        "same_file": 0
+      },
+      "refs": {
+        "files_skipped": 0,
+        "named": 9,
+        "names": 10,
+        "no_match": 1,
+        "no_usable_photo": 0
+      },
+      "replays": {
+        "0.25": {
+          "draws": [
+            {
+              "foreground_faces": 370,
+              "min_cluster_size": 3,
+              "photos": 220,
+              "precision": 1.0,
+              "recall": 0.8889,
+              "scored_rows": 108
+            },
+            {
+              "foreground_faces": 373,
+              "min_cluster_size": 3,
+              "photos": 220,
+              "precision": 1.0,
+              "recall": 0.931,
+              "scored_rows": 116
+            },
+            {
+              "foreground_faces": 345,
+              "min_cluster_size": 3,
+              "photos": 220,
+              "precision": 1.0,
+              "recall": 0.8984,
+              "scored_rows": 109
+            },
+            {
+              "foreground_faces": 364,
+              "min_cluster_size": 3,
+              "photos": 220,
+              "precision": 1.0,
+              "recall": 0.9273,
+              "scored_rows": 101
+            },
+            {
+              "foreground_faces": 357,
+              "min_cluster_size": 3,
+              "photos": 220,
+              "precision": 1.0,
+              "recall": 0.9561,
+              "scored_rows": 98
+            }
+          ],
+          "precision": 1.0,
+          "recall": 0.9203
+        },
+        "0.5": {
+          "draws": [
+            {
+              "foreground_faces": 695,
+              "min_cluster_size": 3,
+              "photos": 440,
+              "precision": 0.9916,
+              "recall": 0.9255,
+              "scored_rows": 218
+            },
+            {
+              "foreground_faces": 726,
+              "min_cluster_size": 3,
+              "photos": 440,
+              "precision": 0.9959,
+              "recall": 0.917,
+              "scored_rows": 217
+            },
+            {
+              "foreground_faces": 718,
+              "min_cluster_size": 3,
+              "photos": 440,
+              "precision": 0.9957,
+              "recall": 0.8889,
+              "scored_rows": 215
+            },
+            {
+              "foreground_faces": 702,
+              "min_cluster_size": 3,
+              "photos": 440,
+              "precision": 1.0,
+              "recall": 0.8898,
+              "scored_rows": 213
+            },
+            {
+              "foreground_faces": 696,
+              "min_cluster_size": 3,
+              "photos": 440,
+              "precision": 0.9896,
+              "recall": 0.6971,
+              "scored_rows": 224
+            }
+          ],
+          "precision": 0.9946,
+          "recall": 0.8637
+        }
+      },
+      "rows_not_found": 0,
+      "seconds": 5.7,
+      "settings": {
+        "agglomerative_min_similarity": 0.4,
+        "attach_min_similarity": 0.5,
+        "background_min_similarity": 0.5,
+        "cluster_method": "hdbscan",
+        "foreground_min_height": 0.03,
+        "foreground_min_ratio": 0.3,
+        "member_min_similarity": 0.3,
+        "min_cluster_size": 4,
+        "min_face_score": 0.8,
+        "min_samples": 3,
+        "not_selfie_prompts": [
+          "a photo of people taken by someone else",
+          "a photo of a person taken from a distance"
+        ],
+        "ref_min_similarity": 0.5,
+        "selfie_min_score": 1.0,
+        "selfie_prompts": [
+          "a selfie",
+          "a selfie taken with a phone's front camera"
+        ],
+        "small_trip_max_faces": 900,
+        "suggest_min_similarity": 0.6
+      },
+      "shots": {
+        "accuracy": 0.9908,
+        "confusion": {
+          "labels": [
+            "solo",
+            "group",
+            "none"
+          ],
+          "rows_true_columns_predicted": [
+            [
+              137,
+              0,
+              1
+            ],
+            [
+              1,
+              234,
+              0
+            ],
+            [
+              1,
+              1,
+              59
+            ]
+          ]
+        },
+        "not_scanned": 0,
+        "selfie": {
+          "labeled": 34,
+          "precision": 1.0,
+          "recall": 1.0
+        }
+      },
+      "split": "test",
+      "suggestions": {
+        "candidates": [],
+        "confirmed": 0,
+        "shown": 0,
+        "with_two_candidates": 0
+      },
+      "tripsort_version": "0.5.0"
+    },
+    "trip2_test_small_trip_rule_off": {
+      "categories_labeled": {
+        "animals": 10,
+        "documents": 19,
+        "food": 3,
+        "other": 384,
+        "scenery": 18
+      },
+      "checked_rows": 434,
+      "faces": {
+        "completeness": 0.9822,
+        "homogeneity": 1.0,
+        "solo_faces": 106,
+        "unassigned": 0.0472,
+        "v_measure": 0.991
+      },
+      "labeled_names_without_a_ref": 0,
+      "people": {
+        "labeled_people": 10,
+        "macro": {
+          "precision": 1.0,
+          "recall": 0.9253
+        },
+        "matched_by_name": 9,
+        "matched_by_photos": 0,
+        "micro": {
+          "precision": 1.0,
+          "recall": 0.9395
+        },
+        "other_predicted_people": 9,
+        "per_person": [
+          {
+            "matched": true,
+            "person": "p1",
+            "photos": 146,
+            "precision": 1.0,
+            "recall": 0.9452
+          },
+          {
+            "matched": true,
+            "person": "p2",
+            "photos": 103,
+            "precision": 1.0,
+            "recall": 0.9612
+          },
+          {
+            "matched": true,
+            "person": "p3",
+            "photos": 72,
+            "precision": 1.0,
+            "recall": 0.9167
+          },
+          {
+            "matched": true,
+            "person": "p4",
+            "photos": 57,
+            "precision": 1.0,
+            "recall": 0.9825
+          },
+          {
+            "matched": true,
+            "person": "p5",
+            "photos": 32,
+            "precision": 1.0,
+            "recall": 1.0
+          },
+          {
+            "matched": true,
+            "person": "p6",
+            "photos": 31,
+            "precision": 1.0,
+            "recall": 0.9032
+          },
+          {
+            "matched": true,
+            "person": "p7",
+            "photos": 26,
+            "precision": 1.0,
+            "recall": 0.8077
+          },
+          {
+            "matched": true,
+            "person": "p8",
+            "photos": 28,
+            "precision": 1.0,
+            "recall": 0.9286
+          },
+          {
+            "matched": true,
+            "person": "p9",
+            "photos": 17,
+            "precision": 1.0,
+            "recall": 0.8824
+          },
+          {
+            "matched": false,
+            "person": "p10",
+            "photos": 0,
+            "precision": null,
+            "recall": null
+          }
+        ],
+        "predicted_people": 18
+      },
+      "ref_copies": {
+        "closest_phash_distance": 16,
+        "flagged": [],
+        "highest_face_similarity": 0.8,
+        "near_copy": 0,
+        "ref_photos": 28,
+        "same_face": 0,
+        "same_file": 0
+      },
+      "refs": {
+        "files_skipped": 0,
+        "named": 9,
+        "names": 10,
+        "no_match": 1,
+        "no_usable_photo": 0
+      },
+      "replays": {
+        "0.25": {
+          "draws": [
+            {
+              "foreground_faces": 370,
+              "min_cluster_size": 4,
+              "photos": 220,
+              "precision": 1.0,
+              "recall": 0.9097,
+              "scored_rows": 108
+            },
+            {
+              "foreground_faces": 373,
+              "min_cluster_size": 4,
+              "photos": 220,
+              "precision": 1.0,
+              "recall": 0.931,
+              "scored_rows": 116
+            },
+            {
+              "foreground_faces": 345,
+              "min_cluster_size": 4,
+              "photos": 220,
+              "precision": 1.0,
+              "recall": 0.8984,
+              "scored_rows": 109
+            },
+            {
+              "foreground_faces": 364,
+              "min_cluster_size": 4,
+              "photos": 220,
+              "precision": 1.0,
+              "recall": 0.9273,
+              "scored_rows": 101
+            },
+            {
+              "foreground_faces": 357,
+              "min_cluster_size": 4,
+              "photos": 220,
+              "precision": 1.0,
+              "recall": 0.9825,
+              "scored_rows": 98
+            }
+          ],
+          "precision": 1.0,
+          "recall": 0.9298
+        },
+        "0.5": {
+          "draws": [
+            {
+              "foreground_faces": 695,
+              "min_cluster_size": 4,
+              "photos": 440,
+              "precision": 0.9916,
+              "recall": 0.9294,
+              "scored_rows": 218
+            },
+            {
+              "foreground_faces": 726,
+              "min_cluster_size": 4,
+              "photos": 440,
+              "precision": 0.9959,
+              "recall": 0.917,
+              "scored_rows": 217
+            },
+            {
+              "foreground_faces": 718,
+              "min_cluster_size": 4,
+              "photos": 440,
+              "precision": 0.9957,
+              "recall": 0.8927,
+              "scored_rows": 215
+            },
+            {
+              "foreground_faces": 702,
+              "min_cluster_size": 4,
+              "photos": 440,
+              "precision": 1.0,
+              "recall": 0.8898,
+              "scored_rows": 213
+            },
+            {
+              "foreground_faces": 696,
+              "min_cluster_size": 4,
+              "photos": 440,
+              "precision": 0.9921,
+              "recall": 0.9161,
+              "scored_rows": 224
+            }
+          ],
+          "precision": 0.9951,
+          "recall": 0.909
+        }
+      },
+      "rows_not_found": 0,
+      "seconds": 3.4,
+      "settings": {
+        "agglomerative_min_similarity": 0.4,
+        "attach_min_similarity": 0.5,
+        "background_min_similarity": 0.5,
+        "cluster_method": "hdbscan",
+        "foreground_min_height": 0.03,
+        "foreground_min_ratio": 0.3,
+        "member_min_similarity": 0.3,
+        "min_cluster_size": 4,
+        "min_face_score": 0.8,
+        "min_samples": 3,
+        "not_selfie_prompts": [
+          "a photo of people taken by someone else",
+          "a photo of a person taken from a distance"
+        ],
+        "ref_min_similarity": 0.5,
+        "selfie_min_score": 1.0,
+        "selfie_prompts": [
+          "a selfie",
+          "a selfie taken with a phone's front camera"
+        ],
+        "small_trip_max_faces": 0,
+        "suggest_min_similarity": 0.6
+      },
+      "shots": {
+        "accuracy": 0.9908,
+        "confusion": {
+          "labels": [
+            "solo",
+            "group",
+            "none"
+          ],
+          "rows_true_columns_predicted": [
+            [
+              137,
+              0,
+              1
+            ],
+            [
+              1,
+              234,
+              0
+            ],
+            [
+              1,
+              1,
+              59
+            ]
+          ]
+        },
+        "not_scanned": 0,
+        "selfie": {
+          "labeled": 34,
+          "precision": 1.0,
+          "recall": 1.0
+        }
+      },
+      "split": "test",
+      "suggestions": {
+        "candidates": [],
+        "confirmed": 0,
+        "shown": 0,
+        "with_two_candidates": 0
+      },
+      "tripsort_version": "0.5.0"
     }
   },
   "videos": {
@@ -4693,6 +5893,209 @@
       "rows_not_found": 0,
       "split": "dev",
       "tripsort_version": "0.4.1"
+    },
+    "trip2_videos_test": {
+      "categories": {
+        "accuracy": 1.0,
+        "confusion": {
+          "labels": [
+            "scenery",
+            "animals",
+            "food",
+            "documents",
+            "other"
+          ],
+          "rows_labeled_columns_predicted": [
+            [
+              1,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              11
+            ]
+          ]
+        },
+        "labeled_categories": [
+          "scenery",
+          "animals"
+        ],
+        "macro_f1_labeled": 1.0,
+        "per_category": {
+          "animals": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 1,
+            "recall": 1.0,
+            "right": 1,
+            "support": 1
+          },
+          "documents": {
+            "f1": null,
+            "precision": null,
+            "predicted": 0,
+            "recall": null,
+            "right": 0,
+            "support": 0
+          },
+          "food": {
+            "f1": null,
+            "precision": null,
+            "predicted": 0,
+            "recall": null,
+            "right": 0,
+            "support": 0
+          },
+          "other": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 11,
+            "recall": 1.0,
+            "right": 11,
+            "support": 11
+          },
+          "scenery": {
+            "f1": 1.0,
+            "precision": 1.0,
+            "predicted": 1,
+            "recall": 1.0,
+            "right": 1,
+            "support": 1
+          }
+        },
+        "photos": 13,
+        "wrong_photos": {}
+      },
+      "checked_rows": 13,
+      "labeled_names_without_a_ref": 0,
+      "people": {
+        "macro": {
+          "precision": 1.0,
+          "recall": 0.3571
+        },
+        "micro": {
+          "precision": 1.0,
+          "recall": 0.4444
+        },
+        "per_person": [
+          {
+            "matched": true,
+            "person": "p1",
+            "photos": 2,
+            "precision": 1.0,
+            "recall": 1.0
+          },
+          {
+            "matched": true,
+            "person": "p2",
+            "photos": 2,
+            "precision": 1.0,
+            "recall": 0.5
+          },
+          {
+            "matched": false,
+            "person": "p3",
+            "photos": 1,
+            "precision": null,
+            "recall": 0.0
+          },
+          {
+            "matched": false,
+            "person": "p4",
+            "photos": 1,
+            "precision": null,
+            "recall": 0.0
+          },
+          {
+            "matched": false,
+            "person": "p5",
+            "photos": 1,
+            "precision": null,
+            "recall": 0.0
+          },
+          {
+            "matched": true,
+            "person": "p6",
+            "photos": 1,
+            "precision": 1.0,
+            "recall": 1.0
+          },
+          {
+            "matched": false,
+            "person": "p7",
+            "photos": 1,
+            "precision": null,
+            "recall": 0.0
+          },
+          {
+            "matched": false,
+            "person": "p8",
+            "photos": 0,
+            "precision": null,
+            "recall": null
+          },
+          {
+            "matched": false,
+            "person": "p9",
+            "photos": 0,
+            "precision": null,
+            "recall": null
+          },
+          {
+            "matched": false,
+            "person": "p10",
+            "photos": 0,
+            "precision": null,
+            "recall": null
+          }
+        ]
+      },
+      "ref_copies": {
+        "closest_phash_distance": 16,
+        "flagged": [],
+        "highest_face_similarity": 0.8,
+        "near_copy": 0,
+        "ref_photos": 28,
+        "same_face": 0,
+        "same_file": 0
+      },
+      "refs": {
+        "files_skipped": 0,
+        "named": 9,
+        "names": 10,
+        "no_match": 1,
+        "no_usable_photo": 0
+      },
+      "rows_not_found": 0,
+      "split": "test",
+      "tripsort_version": "0.5.0"
     }
   }
 }
